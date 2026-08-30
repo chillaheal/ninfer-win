@@ -256,6 +256,12 @@ capacities remain fixed for the process lifetime.
 
 Run the relevant `--help` for the exact current option contract.
 
+## Windows
+
+A complete Windows (MSVC / x64) port of the engine, a native Win32 GUI, and the
+Claude Code serve integration live in [`windows/`](windows/README.md).
+
+
 ## License
 
 NInfer is licensed under the [Apache License 2.0](LICENSE).

@@ -1,0 +1,43 @@
+#pragma once
+
+// Include this once from an exact target translation unit after defining
+// NINFER_QWEN36_VARIANT and NINFER_QWEN36_RUNTIME_NS. The body is shared source; the selected
+// Variant is compile-time data and the only target-dependent calls are its three closed leaves.
+
+#include "targets/qwen3_6/impl/runtime/layouts.h"
+#include "targets/qwen3_6/impl/runtime/dflash_context.h"
+#include "targets/qwen3_6/impl/runtime/text_context.h"
+#include "targets/qwen3_6/impl/runtime/vision_context.h"
+#include "targets/qwen3_6/impl/runtime/schedule.h"
+#include "targets/qwen3_6/impl/runtime/program.h"
+#include "targets/qwen3_6/impl/runtime/pressure_planner.h"
+#include "targets/qwen3_6/impl/runtime/api_impl.h"
+
+#include "targets/qwen3_6/impl/runtime/layouts_impl.h"
+#include "targets/qwen3_6/impl/runtime/dflash_context_impl.h"
+#include "targets/qwen3_6/impl/runtime/text_context_impl.h"
+#include "targets/qwen3_6/impl/runtime/vision_context_impl.h"
+#include "targets/qwen3_6/impl/runtime/text_prefill_impl.h"
+#include "targets/qwen3_6/impl/runtime/graph_impl.h"
+#include "targets/qwen3_6/impl/runtime/speculative_target_impl.h"
+#include "targets/qwen3_6/impl/runtime/dflash_impl.h"
+#include "targets/qwen3_6/impl/runtime/decode_impl.h"
+#include "targets/qwen3_6/impl/runtime/mtp_impl.h"
+#include "targets/qwen3_6/impl/runtime/request_plan_impl.h"
+#include "targets/qwen3_6/impl/runtime/program_impl.h"
+
+namespace ninfer::targets::qwen3_6 {
+
+// These handle classes declare their special members in runtime.h and define them out-of-line
+// (mostly '= default') above, in this translation unit only. MSVC emits such a definition only
+// when it is odr-used here; consumer TUs (engine.cpp, registry.cpp) see declarations alone and
+// otherwise fail to link with LNK2019 on the move constructors. The explicit instantiation
+// requests force emission of every member in this TU, where all definitions are visible.
+template class SequencePlan<NINFER_QWEN36_VARIANT>;
+template class SequencePlanner<NINFER_QWEN36_VARIANT>;
+template class RequestBasePlan<NINFER_QWEN36_VARIANT>;
+template class AdmissionCandidate<NINFER_QWEN36_VARIANT>;
+template class PressurePlanningSession<NINFER_QWEN36_VARIANT>;
+template class Program<NINFER_QWEN36_VARIANT>;
+
+} // namespace ninfer::targets::qwen3_6
