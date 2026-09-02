@@ -13,14 +13,15 @@ The GPU driver API (nvcuda.dll) comes from the installed NVIDIA driver.
 Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File build_windows.ps1          # incremental
   powershell -NoProfile -ExecutionPolicy Bypass -File build_windows.ps1 -Clean   # from scratch
+  powershell -NoProfile -ExecutionPolicy Bypass -File build_windows.ps1 -DistDir Build32   # assemble to Build32/
 #>
-param([switch]$Clean)
+param([switch]$Clean, [string]$DistDir = "dist")
 
 $ErrorActionPreference = "Stop"
 $root  = $PSScriptRoot
 $src   = Join-Path $root "ninfer-win"
 $build = Join-Path $src  "build"
-$dist  = Join-Path $root "dist"
+$dist  = Join-Path $root $DistDir
 $deps  = Join-Path $root "deps"
 
 function Step([string]$msg) { Write-Host ""; Write-Host "=== $msg ===" -ForegroundColor Cyan }

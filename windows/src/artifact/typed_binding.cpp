@@ -66,10 +66,10 @@ DType dtype_for(NumericFormat format) {
     }
 }
 
-Weight contiguous_weight(const MaterializedArtifact& materialized, ObjectHandle handle,
-                         NumericFormat format, std::int32_t rows, std::int32_t columns) {
+Weight contiguous_weight(const std::byte* bytes, NumericFormat format, std::int32_t rows,
+                         std::int32_t columns) {
     Weight out{};
-    out.payload       = materialized.device_data(handle);
+    out.payload       = bytes;
     out.qdata         = out.payload;
     out.payload_bytes = static_cast<std::uint64_t>(rows) * columns * dtype_size(dtype_for(format));
     out.qtype         = qtype_for(format);
@@ -84,12 +84,11 @@ Weight contiguous_weight(const MaterializedArtifact& materialized, ObjectHandle 
     return out;
 }
 
-Weight row_split_weight(const MaterializedArtifact& materialized, ObjectHandle handle,
-                        NumericFormat format, std::int32_t rows, std::int32_t columns) {
+Weight row_split_weight(const std::byte* bytes, NumericFormat format, std::int32_t rows,
+                        std::int32_t columns) {
     const std::array<std::uint64_t, 2> shape = {static_cast<std::uint64_t>(rows),
                                                 static_cast<std::uint64_t>(columns)};
     const RowSplitGeometry geometry          = row_split_geometry(format, shape);
-    const auto* bytes = static_cast<const std::byte*>(materialized.device_data(handle));
 
     Weight out{};
     out.payload          = bytes;
@@ -113,12 +112,11 @@ Weight row_split_weight(const MaterializedArtifact& materialized, ObjectHandle h
     return out;
 }
 
-Weight row_scale_weight(const MaterializedArtifact& materialized, ObjectHandle handle,
-                        NumericFormat format, std::int32_t rows, std::int32_t columns) {
+Weight row_scale_weight(const std::byte* bytes, NumericFormat format, std::int32_t rows,
+                        std::int32_t columns) {
     const std::array<std::uint64_t, 2> shape = {static_cast<std::uint64_t>(rows),
                                                 static_cast<std::uint64_t>(columns)};
     const RowScaleGeometry geometry          = row_scale_geometry(format, shape);
-    const auto* bytes = static_cast<const std::byte*>(materialized.device_data(handle));
 
     Weight out{};
     out.payload         = bytes;
@@ -154,6 +152,8 @@ ObjectHandle bind_tensor(Binder& binder, std::string_view name, NumericFormat fo
                               std::span<const std::uint64_t>(shape.begin(), shape.size()));
     if (placement == TensorPlacement::Device) {
         binder.materialize_on_device(handle);
+    } else if (placement == TensorPlacement::Host) {
+        binder.retain_on_host(handle);
     } else {
         binder.validate_only(handle);
     }
@@ -171,6 +171,21 @@ ObjectHandle bind_raw_resource(Binder& binder, std::string_view name) {
     return handle;
 }
 
+Weight build_weight(const std::byte* bytes, NumericFormat format, std::int32_t rows,
+                    std::int32_t columns) {
+    if (format == NumericFormat::NVFP4) {
+        throw std::invalid_argument(
+            "materialized_weight: NVFP4 requires target-validated weight and input divisors");
+    }
+    if (storage_layout_for(format) == StorageLayout::ContiguousLeV1) {
+        return contiguous_weight(bytes, format, rows, columns);
+    }
+    if (storage_layout_for(format) == StorageLayout::RowScaleV1) {
+        return row_scale_weight(bytes, format, rows, columns);
+    }
+    return row_split_weight(bytes, format, rows, columns);
+}
+
 Tensor materialized_tensor(const MaterializedArtifact& materialized, ObjectHandle handle,
                            NumericFormat format,
                            std::initializer_list<std::int32_t> internal_shape) {
@@ -179,17 +194,21 @@ Tensor materialized_tensor(const MaterializedArtifact& materialized, ObjectHandl
 
 Weight materialized_weight(const MaterializedArtifact& materialized, ObjectHandle handle,
                            NumericFormat format, std::int32_t rows, std::int32_t columns) {
-    if (format == NumericFormat::NVFP4) {
-        throw std::invalid_argument(
-            "materialized_weight: NVFP4 requires target-validated weight and input divisors");
-    }
-    if (storage_layout_for(format) == StorageLayout::ContiguousLeV1) {
-        return contiguous_weight(materialized, handle, format, rows, columns);
-    }
-    if (storage_layout_for(format) == StorageLayout::RowScaleV1) {
-        return row_scale_weight(materialized, handle, format, rows, columns);
-    }
-    return row_split_weight(materialized, handle, format, rows, columns);
+    return build_weight(static_cast<const std::byte*>(materialized.device_data(handle)), format,
+                        rows, columns);
+}
+
+Tensor materialized_host_tensor(const MaterializedArtifact& materialized, ObjectHandle handle,
+                                NumericFormat format,
+                                std::initializer_list<std::int32_t> internal_shape) {
+    const std::byte* bytes = materialized.resource_bytes(handle).data();
+    return Tensor(static_cast<void*>(const_cast<std::byte*>(bytes)), dtype_for(format),
+                  internal_shape);
+}
+
+Weight materialized_host_weight(const MaterializedArtifact& materialized, ObjectHandle handle,
+                                NumericFormat format, std::int32_t rows, std::int32_t columns) {
+    return build_weight(materialized.resource_bytes(handle).data(), format, rows, columns);
 }
 
 } // namespace ninfer::artifact

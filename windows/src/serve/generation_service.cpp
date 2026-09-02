@@ -240,7 +240,8 @@ GenerationService::GenerationService(ServeOptions options, LoadProgress load_pro
     engine_options.pending_timeout_ms       = options_.pending_timeout_ms;
     engine_options.prefill_chunk            = options_.prefill_chunk;
     engine_options.kv_cache                 = options_.kv_cache;
-    engine_options.enable_vision            = options_.enable_vision;
+    engine_options.enable_vision            = options_.vision_mode != VisionMode::Off;
+    engine_options.vision_cpu               = options_.vision_mode == VisionMode::Cpu;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
     engine_options.speculative              = options_.speculative;
     engine_options.context_cache            = options_.context_cache;
@@ -307,7 +308,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
     prepared.preserve_thinking                 = semantics.preserve_thinking;
     prepared.preserve_thinking_semantic_change = request.preserve_thinking_semantic_change;
     const bool request_has_media               = request.media_item_count() != 0;
-    if (request_has_media && !options_.enable_vision) {
+    if (request_has_media && options_.vision_mode == VisionMode::Off) {
         const std::invalid_argument error("Vision is disabled for this server");
         throw_invalid_input(error, "vision_disabled");
     }
@@ -356,7 +357,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
 int GenerationService::count_prompt_tokens(const GenerationRequest& request,
                                            std::function<bool()> is_cancelled) const {
     const bool request_has_media = request.media_item_count() != 0;
-    if (request_has_media && !options_.enable_vision) {
+    if (request_has_media && options_.vision_mode == VisionMode::Off) {
         const std::invalid_argument error("Vision is disabled for this server");
         throw_invalid_input(error, "vision_disabled");
     }

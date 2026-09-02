@@ -100,10 +100,14 @@ MaterializedArtifact materialize(const Reader& reader, const MaterializationPlan
     MaterializedArtifact out;
     out.objects_.resize(plan.object_count);
     const std::uint64_t capacity = plan.device_capacity_bytes;
-    if (capacity == 0 || capacity > static_cast<std::uint64_t>(SIZE_MAX)) {
+    if (capacity > static_cast<std::uint64_t>(SIZE_MAX)) {
         throw ArtifactError("artifact tensor backing size is invalid");
     }
-    out.device_arena_ = std::make_unique<DeviceArena>(static_cast<std::size_t>(capacity));
+    // capacity == 0 is a valid plan: host-only materialization (e.g. the CPU vision leg
+    // keeps every tensor in the artifact mmap). No arena; device_arena() throws on use.
+    if (capacity > 0) {
+        out.device_arena_ = std::make_unique<DeviceArena>(static_cast<std::size_t>(capacity));
+    }
     out.stats_.device_capacity_bytes = capacity;
     out.stats_.tensor_count          = plan.device_objects.size();
     out.stats_.resource_count        = plan.host_objects.size();
@@ -142,7 +146,12 @@ MaterializedArtifact materialize(const Reader& reader, const MaterializationPlan
         });
         total = checked_add(total, placement.bytes, "artifact tensor byte count overflows u64");
     }
-    if (ranges.empty()) { throw ArtifactError("materialization plan has no device tensors"); }
+    // A zero-device-tensor plan (host-only materialization, e.g. the CPU vision leg)
+    // has nothing to upload: stats default to zero, so finish and return.
+    if (ranges.empty()) {
+        if (progress != nullptr && progress->callback) { progress->callback("weights", 0, 0); }
+        return out;
+    }
     std::sort(ranges.begin(), ranges.end(), [](const CopyRange& a, const CopyRange& b) {
         return a.source_begin < b.source_begin;
     });

@@ -1,5 +1,6 @@
 #include "targets/qwen3_6/impl/runtime/instance.h"
 #include "targets/qwen3_6/impl/runtime/vision_context.h"
+#include "targets/qwen3_6/impl/runtime/vision_cpu_impl.h"
 
 #include "core/device.h"
 #include "core/layout.h"
@@ -16,11 +17,13 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS::schedule {
 namespace {
@@ -177,6 +180,7 @@ VisionContext::VisionContext(DeviceContext& ctx, const LoadedModelData& weights)
     if (!weights.vision) {
         throw std::invalid_argument("Vision execution was requested without materialized weights");
     }
+    vision_cpu_ = weights.features.vision_cpu;
     const auto& vision = *weights.vision;
     patch_embed_       = &vision.common.patch_embedding;
     patch_embed_bias_  = &vision.common.patch_embedding_bias;
@@ -214,7 +218,8 @@ std::size_t VisionContext::workspace_bytes(std::size_t patches, std::size_t merg
 }
 
 VisionWorkspacePlan VisionContext::plan_workspace(std::uint32_t max_merged_tokens,
-                                                  std::size_t general_capacity_bytes) {
+                                                  std::size_t general_capacity_bytes,
+                                                  bool include_encode_peak) {
     if (max_merged_tokens == 0) {
         throw std::invalid_argument("Vision workspace capacity bound must be positive");
     }
@@ -224,11 +229,16 @@ VisionWorkspacePlan VisionContext::plan_workspace(std::uint32_t max_merged_token
     VisionWorkspacePlan out;
     out.max_merged_tokens      = max_merged_tokens;
     out.general_capacity_bytes = general_capacity_bytes;
+    // Cpu-mode encode runs on host, so the device only needs the H2D handoff region; a zero
+    // encode peak frees its VRAM for KV.
     out.encode_peak_bytes =
-        build_workspace_layout(checked_mul(max_merged_tokens, VisionScheduleConfig::merge_unit,
-                                           "capacity patch count"),
-                               max_merged_tokens)
-            .bytes;
+        include_encode_peak
+            ? build_workspace_layout(
+                  checked_mul(max_merged_tokens, VisionScheduleConfig::merge_unit,
+                              "capacity patch count"),
+                  max_merged_tokens)
+                  .bytes
+            : 0;
     out.handoff_offset_bytes =
         align_up(std::max(general_capacity_bytes, merger_hidden_bytes(max_merged_tokens)),
                  kWorkspaceAlignment, "handoff offset");
@@ -276,6 +286,15 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
     if (output.data != planned_output.data || output.bytes() != planned_output.bytes()) {
         throw std::invalid_argument("Vision output does not name the planned handoff region");
     }
+    // Oracle: the host patch input is mode-independent (both paths consume this same buffer).
+    vision_debug_dump(vision_cpu_ ? "cpu" : "gpu", "patches", item.patches.data(),
+                      item.patches.size() * sizeof(std::uint16_t));
+    // Cpu-mode encode runs entirely on host (weights live in RAM); the device only receives the
+    // final BF16 handoff, so no device workspace layout is required and none is checked.
+    if (vision_cpu_) {
+        encode_cpu(item, output, ctx_.stream);
+        return;
+    }
     const VisionWorkspaceLayout layout = build_workspace_layout(patches64, tokens64);
     if (layout.bytes > plan.encode_peak_bytes || backing.bytes < plan.capacity_bytes) {
         throw std::invalid_argument("Vision workspace capacity is too small for request");
@@ -283,6 +302,19 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
     const auto patches  = static_cast<std::int32_t>(patches64);
     const auto tokens   = static_cast<std::int32_t>(tokens64);
     cudaStream_t stream = ctx_.stream;
+
+    // Oracle v2 (env-gated): D2H copy of per-stage activations for CPU-vs-GPU stage comparison.
+    const char* dump_dir = std::getenv("NINFER_VISION_DUMP");
+    const bool dumping   = dump_dir != nullptr && dump_dir[0] != '\0';
+    auto dump_stage = [&](const char* tag, const void* dev_data, std::size_t elems) {
+        if (!dumping) { return; }
+        std::vector<std::uint16_t> host(elems);
+        CUDA_CHECK(cudaMemcpyAsync(host.data(), dev_data, elems * sizeof(std::uint16_t),
+                                   cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        vision_debug_dump("gpu", tag, host.data(), host.size() * sizeof(std::uint16_t));
+    };
+    const auto stage_elems = static_cast<std::size_t>(patches) * VisionScheduleConfig::hidden;
 
     Tensor position_ids = layout.position_ids.bind(backing);
     copy_host(control.position_ids.data(), position_ids, stream);
@@ -292,6 +324,7 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
     copy_host(item.patches.data(), patch_bf16, stream);
     ops::linear(patch_bf16, *patch_embed_, x, stream);
     ops::add_bias(*patch_embed_bias_, x, stream);
+    dump_stage("x1", x.data, stage_elems);
     // The artifact records the source table shape [rows,hidden], while Tensor's
     // contiguous matrix convention is [inner,columns]. The payload is already
     // row-major, so this is a zero-copy [hidden,rows] view, not a transpose.
@@ -302,6 +335,7 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
     Tensor position_table = position_embed_->reshape(
         {VisionScheduleConfig::hidden, VisionScheduleConfig::position_embeddings});
     ops::vision_pos_embed_add(position_table, pos_indices, pos_weights, x, stream);
+    dump_stage("x2", x.data, stage_elems);
     for (std::size_t layer = 0; layer < blocks_.size(); ++layer) {
         const BlockW& block = blocks_[layer];
         {
@@ -356,19 +390,28 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
             ops::linear(up, *block.fc2, down, stream);
             ops::add_bias(*block.fc2_bias, down, stream);
             ops::residual_add(down, x, stream);
+            {
+                char tag[16];
+                std::snprintf(tag, sizeof(tag), "blk%02zu", layer);
+                dump_stage(tag, x.data, stage_elems);
+            }
         }
     }
 
     Tensor normalized = layout.normalized.bind(backing);
     ops::layer_norm(x, *merger_.norm_weight, *merger_.norm_bias, VisionScheduleConfig::norm_eps,
                     normalized, stream);
+    dump_stage("m1", normalized.data, stage_elems);
     Tensor merged = normalized.view({VisionScheduleConfig::merger_hidden, tokens});
     Tensor hidden = layout.merger_hidden.bind(backing);
     ops::linear(merged, *merger_.fc1, hidden, stream);
     ops::add_bias(*merger_.fc1_bias, hidden, stream);
     ops::gelu(hidden, ops::GeluMode::Exact, stream);
+    dump_stage("m2", hidden.data, static_cast<std::size_t>(tokens) * VisionScheduleConfig::merger_hidden);
     ops::linear(hidden, *merger_.fc2, output, stream);
     ops::add_bias(*merger_.fc2_bias, output, stream);
+    // Oracle: final handoff (same bytes as the CPU-side "out" dump).
+    dump_stage("out", output.data, static_cast<std::size_t>(tokens) * VisionScheduleConfig::out_hidden);
 }
 
 VisionPrefillSession::VisionPrefillSession(DeviceContext& device, const LoadedModelData& model,

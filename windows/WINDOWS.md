@@ -216,13 +216,24 @@ works against it with no proxy or adapter. Verified end-to-end with a real
    ```
 
 Shortcut: `start-claude-ninfer.ps1` at the project root does steps 2–3 for you. It
-checks that the server answers on port 8080 (warns and stops if not), sets the two env
+checks that the server answers on port 8080 (warns and stops if not), sets the env
 vars, and launches `claude` — any extra arguments pass through:
 
 ```powershell
 .\start-claude-ninfer.ps1                 # interactive session
 .\start-claude-ninfer.ps1 -p "Say OK"     # one-shot
 ```
+
+It also sizes Claude Code's context window from the server: serve builds from
+2026-09-02 report their context accounting in `/health`
+(`{"context": {"max_context": N, "kv_capacity": M}}`), and the script sets
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to
+`min(max_context, kv_capacity) − 5000` (the margin is `$Margin` in the script).
+The env vars take precedence over `settings.json`, so this happens before Claude
+starts — no in-Claude changes needed. Against an older serve without the field it
+prints a warning and launches with the `settings.json` window instead (the
+`autoCompactWindow` value there is that fallback). Check what it would compute
+without starting Claude: `.logs\health_context_probe.ps1`.
 
 It never starts or stops the server itself (edit `$Port` in the script for a
 non-default port).
@@ -237,6 +248,64 @@ Notes:
   port 8888), switching to ninfer means changing **only** `ANTHROPIC_BASE_URL`.
 - A harmless client-side diagnostic `[claude-code:unrecognized_model]` may
   appear in stderr for non-Claude model labels — it is not an error.
+
+## Web browsing via Claude Code (Playwright MCP)
+
+Claude Code has the official Microsoft **Playwright MCP** server registered
+(user scope, set up 2026-09-02). It gives the model a real headless browser
+(Microsoft Edge): navigate pages, read them via accessibility-tree snapshots,
+click, fill forms, take screenshots, and run web searches through a real
+search engine. Because it performs real browsing with a real browser
+fingerprint, it can fetch WAF-protected pages where plain HTTP clients get
+403/503.
+
+Tools (visible in `/mcp`, prefix `mcp__playwright__`): `browser_navigate`,
+`browser_snapshot`, `browser_click`, `browser_type`, `browser_press_key`,
+`browser_fill_form`, `browser_file_upload`, `browser_take_screenshot`,
+`browser_go_back`/`browser_go_forward`, `browser_evaluate`,
+`browser_run_code_unsafe`, and more.
+
+### Setup (already done on this machine — reference for rebuild)
+
+1. Node.js 24 LTS, portable (no admin rights, no system PATH change):
+   `C:\Users\Micke\nodejs\node-v24.19.0-win-x64\`.
+2. `npm install -g @playwright/mcp@0.0.80` into that Node tree.
+3. Registration (user scope, written to `~/.claude.json`):
+
+   ```powershell
+   claude mcp add --scope user playwright -- "C:\Users\Micke\nodejs\node-v24.19.0-win-x64\node.exe" "C:\Users\Micke\nodejs\node-v24.19.0-win-x64\node_modules\@playwright\mcp\cli.js" --headless --browser=msedge
+   ```
+
+   The command must be `node.exe` + the absolute path to `cli.js`: the
+   `npx`/`.cmd` shims re-invoke a bare `node`, which is not on the system PATH
+   on this machine — a stdio server launched that way dies instantly
+   (`Connection closed`). A new/changed registration needs a Claude Code
+   restart.
+4. Verify: `claude mcp list` → `playwright: … ✔ Connected`.
+
+### Safety
+
+- The per-call permission prompt is the only real boundary: Playwright MCP
+  explicitly states it is *not* a security boundary. Never blanket-allowlist
+  `mcp__playwright__*` in any settings file.
+- `browser_run_code_unsafe` executes arbitrary JavaScript in the server
+  process (RCE-equivalent) — never allowlist it.
+- File access is confined by default: `file://` navigation is blocked and
+  file access is restricted to workspace roots. Do not pass
+  `--allow-unrestricted-file-access`, `--secrets`, `--grant-permissions`, or
+  `--ignore-https-errors`.
+- A fresh temporary browser profile per Claude session (no persistent logins).
+  Vision mode is off by default — the model reads the accessibility tree,
+  which is more reliable and cheaper; opt in with `--caps=vision`.
+- To watch the browser act: remove `--headless` (headed is the server
+  default).
+
+### Rollback
+
+```powershell
+claude mcp remove --scope user playwright    # remove the registration
+Remove-Item -Recurse C:\Users\Micke\nodejs   # optional: remove portable Node
+```
 
 ## Models
 

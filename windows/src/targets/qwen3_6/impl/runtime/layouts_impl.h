@@ -564,7 +564,11 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
     if (plan.features.vision) {
         const std::uint32_t merged = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(plan.capacity, kMaximumVisionItemTokens));
-        out.vision   = schedule::VisionContext::plan_workspace(merged, out.general_capacity);
+        // In Cpu mode the encode pass runs on host, so the device only needs the H2D handoff
+        // region; skipping the encode peak frees its VRAM for KV.
+        out.vision   = schedule::VisionContext::plan_workspace(
+                           merged, out.general_capacity,
+                           /*include_encode_peak=*/!plan.features.vision_cpu);
         out.capacity = std::max(out.capacity, out.vision->capacity_bytes);
     }
     return out;

@@ -69,7 +69,7 @@ enum : UINT {
     IDC_TOP_K_EDIT,               // 111
     IDC_GREEDY_CHECK,             // 112
     IDC_THINKING_CHECK,           // 113
-    IDC_VISION_CHECK,             // 114
+    IDC_VISION_COMBO,             // 114 (was the Vision checkbox; now the Off/GPU/CPU combo)
     IDC_SPEC_COMBO,               // 115
     IDC_DRAFT_TOKENS_EDIT,        // 116
     IDC_SEED_EDIT,                // 117
@@ -101,6 +101,9 @@ enum : UINT {
     IDC_CT_STATUS_MATCH,          // 140
     // Follow-up round (2026-08-30):
     IDC_STOP_BUTTON,              // 141 — stop the serve this GUI launched; the GUI stays open
+    // Sampling preset fields (2026-09-01): the thinking checkbox drives these defaults.
+    IDC_MIN_P_EDIT,               // 142
+    IDC_PRESENCE_PENALTY_EDIT,    // 143
 };
 
 constexpr UINT WM_APP_DONE = WM_APP + 1;  // wParam: serve exit code (main window only)
@@ -311,10 +314,13 @@ struct ChildProcess {
 
 ChildProcess g_child {};
 
-// Cached VRAM probe: the last model probed and its KV fit in tokens.
-// Re-probing only happens when the selected model changes, so repeated Serve
-// clicks against the same artifact stay instant.
-std::wstring g_probe_model;
+// Cached VRAM probe: the last probe key and its KV fit in tokens. The key
+// combines the model with every sizing control (vision regime, KV dtype,
+// speculation) because the fit depends on where the ViT weights and encode
+// workspace live (off/gpu/cpu), on the KV bytes per token, and on the MTP
+// reservation. Re-probing only happens when the model or a sizing control
+// changes, so repeated Serve clicks against the same artifact stay instant.
+std::wstring g_probe_key;
 std::uint32_t g_probe_fit = 0;
 
 void set_status(HWND hwnd, std::wstring_view text) {
@@ -331,6 +337,18 @@ std::uint64_t parse_wide_u64(const std::wstring& text) {
     return static_cast<std::uint64_t>(value);
 }
 
+// Qwen's recommended sampling presets (match the engine's per-target defaults in
+// package.cpp). The thinking checkbox drives these: checked -> thinking preset,
+// unchecked -> Instruct (non-thinking) preset. The fields stay user-editable; this
+// only (re)populates them at startup and when the mode is toggled.
+void apply_sampling_preset(HWND hwnd, bool thinking) {
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TEMPERATURE_EDIT), thinking ? L"1.0" : L"0.7");
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TOP_P_EDIT), thinking ? L"0.95" : L"0.80");
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TOP_K_EDIT), L"20");
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_MIN_P_EDIT), L"0.0");
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_PRESENCE_PENALTY_EDIT), thinking ? L"0.0" : L"1.5");
+}
+
 // Append the sampling flags read from the form controls. Empty fields are
 // omitted so engine/model defaults apply. When `fit` is nonzero (a successful
 // VRAM probe), the probed KV fit is pinned as an explicit --kv-capacity and the
@@ -344,6 +362,8 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
     const std::wstring temp    = get_control_text(GetDlgItem(hwnd, IDC_TEMPERATURE_EDIT));
     const std::wstring top_p   = get_control_text(GetDlgItem(hwnd, IDC_TOP_P_EDIT));
     const std::wstring top_k   = get_control_text(GetDlgItem(hwnd, IDC_TOP_K_EDIT));
+    const std::wstring min_p   = get_control_text(GetDlgItem(hwnd, IDC_MIN_P_EDIT));
+    const std::wstring presence= get_control_text(GetDlgItem(hwnd, IDC_PRESENCE_PENALTY_EDIT));
     const std::wstring seed    = get_control_text(GetDlgItem(hwnd, IDC_SEED_EDIT));
     const std::wstring draft   = get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT));
 
@@ -351,7 +371,8 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
     const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
     const bool greedy        = ::SendMessageW(GetDlgItem(hwnd, IDC_GREEDY_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
     const bool thinking      = ::SendMessageW(GetDlgItem(hwnd, IDC_THINKING_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
-    const bool vision        = ::SendMessageW(GetDlgItem(hwnd, IDC_VISION_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    // Vision regime: 0 = Off (no flag), 1 = GPU, 2 = CPU (the combo items).
+    const int vision_mode    = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
     const bool lm_head_draft =
         ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
 
@@ -373,9 +394,16 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
     if (!temp.empty()) { args.push_back(L"--temperature"); args.push_back(temp); }
     if (!top_p.empty()) { args.push_back(L"--top-p"); args.push_back(top_p); }
     if (!top_k.empty()) { args.push_back(L"--top-k"); args.push_back(top_k); }
+    if (!min_p.empty()) { args.push_back(L"--min-p"); args.push_back(min_p); }
+    if (!presence.empty()) { args.push_back(L"--presence-penalty"); args.push_back(presence); }
     if (greedy) { args.push_back(L"--greedy"); }
     if (!thinking) { args.push_back(L"--no-thinking"); }
-    if (vision) { args.push_back(L"--vision"); }
+    if (vision_mode > 0) {
+        // Explicit regime (a bare --vision would mean GPU); Off omits the flag.
+        static const wchar_t* kVisionRegimes[] = {L"gpu", L"cpu"};
+        args.push_back(L"--vision");
+        args.push_back(kVisionRegimes[vision_mode - 1]);
+    }
     if (spec_idx > 0) {
         static const wchar_t* kSpecs[] = {L"mtp", L"dflash"};
         args.push_back(L"--spec");
@@ -436,15 +464,45 @@ std::uint64_t parse_probe_field(const std::string& text, const char* key) {
 // Synchronously launch the sibling CLI in probe mode and return the largest KV
 // capacity (tokens) that fits current free VRAM after a 3% margin. Completes in
 // seconds (no weights, no model build). Returns 0 on failure — the status line
-// carries the reason.
-std::uint32_t run_probe(HWND hwnd, const std::wstring& model) {
+// carries the reason. The probe forwards the same sizing controls the serve
+// child gets (vision regime, KV dtype, speculation) so the fitted pool matches
+// the launch; `key` is the (model, sizing controls) combination the result is
+// cached under.
+std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring& key) {
     const std::wstring cli = find_sibling_cli();
     if (cli.empty()) {
         set_status(hwnd, L"Error: ninfer-cli.exe not found next to Ninfer.exe");
         return 0;
     }
 
-    const std::vector<std::wstring> args {cli, model, L"--probe"};
+    // Probe the same sizing regime the serve child will run, so the fitted pool
+    // matches the launch (off/default items -> no flag; the probe loads no
+    // weights, ~1 s). Verbatim parity with append_sampling_args for the sizing
+    // flags; sampling-only flags do not size the pool and are omitted.
+    const int vision_mode = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    const int kv_idx   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_GETCURSEL, 0, 0));
+    const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    const std::wstring draft = get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT));
+    const bool lm_head_draft =
+        ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    std::vector<std::wstring> args {cli, model, L"--probe"};
+    if (vision_mode > 0) {
+        static const wchar_t* kVisionRegimes[] = {L"gpu", L"cpu"};
+        args.push_back(L"--vision");
+        args.push_back(kVisionRegimes[vision_mode - 1]);
+    }
+    if (kv_idx > 0) {
+        static const wchar_t* kKvDtypes[] = {L"bf16", L"int8", L"fp8"};
+        args.push_back(L"--kv-dtype");
+        args.push_back(kKvDtypes[kv_idx - 1]);
+    }
+    if (spec_idx > 0) {
+        static const wchar_t* kSpecs[] = {L"mtp", L"dflash"};
+        args.push_back(L"--spec");
+        args.push_back(kSpecs[spec_idx - 1]);
+        if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
+        if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
+    }
     const std::wstring command_line = build_command_line(args);
 
     SECURITY_ATTRIBUTES sa {};
@@ -498,19 +556,48 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model) {
         return 0;
     }
 
-    g_probe_model = model;
-    g_probe_fit   = static_cast<std::uint32_t>(fit);
-    set_status(hwnd, L"Auto: ~" + std::to_wstring(fit) + L" tokens fit (free after weights: " +
-                       format_gib(free_after) + L")");
+    g_probe_key = key;
+    g_probe_fit = static_cast<std::uint32_t>(fit);
+    const std::wstring regime = vision_mode == 1    ? L" (vision gpu)"
+                               : vision_mode == 2 ? L" (vision cpu)"
+                               :                    L"";
+    set_status(hwnd, L"AutoContext" + regime + L": ~" + std::to_wstring(fit) + L" tokens fit (free after weights: " +
+                           format_gib(free_after) + L")");
     return g_probe_fit;
 }
 
-// Return the cached probe fit for `model`, re-probing only when the model changed.
+// The probe cache key: the model plus every sizing control the probe forwards
+// (vision regime, KV dtype, speculation). Reads the same controls run_probe
+// does, so a changed key means a different probe command line.
+std::wstring build_probe_key(HWND hwnd, const std::wstring& model) {
+    const int vision_mode = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    const int kv_idx   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_GETCURSEL, 0, 0));
+    const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    const std::wstring draft = get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT));
+    const bool lm_head_draft =
+        ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    std::wstring key = model;
+    key.push_back(L'\x01');
+    key.append(std::to_wstring(vision_mode));
+    key.push_back(L'\x01');
+    key.append(std::to_wstring(kv_idx));
+    key.push_back(L'\x01');
+    key.append(std::to_wstring(spec_idx));
+    key.push_back(L'\x01');
+    key.append(draft);
+    key.push_back(L'\x01');
+    key.push_back(lm_head_draft ? L'1' : L'0');
+    return key;
+}
+
+// Return the cached probe fit for the current (model, sizing controls),
+// re-probing when any part of the key changed.
 std::uint32_t ensure_probe(HWND hwnd, const std::wstring& model) {
-    if (model == g_probe_model && g_probe_fit > 0) { return g_probe_fit; }
+    const std::wstring key = build_probe_key(hwnd, model);
+    if (key == g_probe_key && g_probe_fit > 0) { return g_probe_fit; }
     set_status(hwnd, L"Measuring VRAM…");
     ::UpdateWindow(hwnd);
-    return run_probe(hwnd, model);
+    return run_probe(hwnd, model, key);
 }
 
 // On exit, terminate every ninfer engine process (ninfer-cli.exe and
@@ -606,6 +693,15 @@ void serve_child(HWND hwnd) {
             set_status(hwnd, L"Error: port must be numeric");
             return;
         }
+    }
+
+    // The engine rejects dflash + vision (cli/serve option validation); surface
+    // it up front instead of dying at child launch.
+    const int spec_sel   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    const int vision_sel = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    if (spec_sel == 2 /* dflash */ && vision_sel != 0 /* off */) {
+        set_status(hwnd, L"dflash cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
+        return;
     }
 
     // A serve already answering on the target port would make the new child die on
@@ -1083,20 +1179,25 @@ void create_main_controls(HWND hwnd) {
     edit(IDC_MAX_NEW_EDIT, 250, 34, 60, 22);
     label(0, L"KV dtype:", 324, 36);
     combo(IDC_KV_DTYPE_COMBO, 396, 34, 70, {L"(default)", L"bf16", L"int8", L"fp8"});
-    button(IDC_AUTO_BUTTON, L"Auto", 480, 34, 50);
+    button(IDC_AUTO_BUTTON, L"AutoContext", 480, 34, 90);
 
-    // Row 3: sampling
+    // Row 3: sampling (the 5 Qwen params grouped, then the greedy toggle)
     label(0, L"Temperature:", 8, 64);
     edit(IDC_TEMPERATURE_EDIT, 100, 62, 60, 22);
     label(0, L"Top-p:", 174, 64);
     edit(IDC_TOP_P_EDIT, 222, 62, 60, 22);
     label(0, L"Top-k:", 296, 64);
     edit(IDC_TOP_K_EDIT, 344, 62, 60, 22);
-    check(IDC_GREEDY_CHECK, L"Greedy", 420, 64, false);
+    label(0, L"Min-p:", 418, 64);
+    edit(IDC_MIN_P_EDIT, 460, 62, 48, 22);
+    label(0, L"Presence:", 520, 64);
+    edit(IDC_PRESENCE_PENALTY_EDIT, 592, 62, 48, 22);
+    check(IDC_GREEDY_CHECK, L"Greedy", 660, 64, false);
 
     // Row 4: behavior flags
     check(IDC_THINKING_CHECK, L"Thinking", 8, 92, true);
-    check(IDC_VISION_CHECK, L"Vision", 150, 92, false);
+    label(0, L"Vision:", 150, 94);
+    combo(IDC_VISION_COMBO, 200, 92, 64, {L"Off", L"GPU", L"CPU"});
     label(0, L"Spec:", 290, 94);
     combo(IDC_SPEC_COMBO, 330, 92, 90, {L"(none)", L"mtp", L"dflash"});
     label(0, L"Draft tokens:", 430, 94);
@@ -1119,16 +1220,17 @@ void create_main_controls(HWND hwnd) {
     button(IDC_EXIT_BUTTON, L"Exit", 842, 119, 60);
 
     // Qwen3.8-27B recommended defaults for coding (model card + engine presets):
-    // 32k context, fp8 KV cache, thinking-mode sampling, MTP speculation with
-    // an optimized proposal head. Users can override any of these per run.
+    // 32k context, fp8 KV cache, thinking-mode sampling, greedy decoding, MTP speculation
+    // with 5 drafts (measured +38% decode tok/s vs sampling d=3). Users can override any
+    // of these per run.
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"32768");
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_NEW_EDIT), L"8192");
     ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
-    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TEMPERATURE_EDIT), L"1.0");
-    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TOP_P_EDIT), L"0.95");
-    ::SetWindowTextW(GetDlgItem(hwnd, IDC_TOP_K_EDIT), L"20");
+    // Thinking is checked by default (Row 4); seed the sampling fields with the
+    // thinking preset. The checkbox handler re-applies the matching preset on toggle.
+    apply_sampling_preset(hwnd, true);
     ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 1, 0);      // mtp
-    ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"3");
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"5");
 
     // Status bar (plain static)
     HWND status = ::CreateWindowExW(0, L"STATIC", L"Idle",
@@ -1199,13 +1301,23 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     set_status(hwnd, L"Select a model first");
                     return 0;
                 }
-                // Re-probe when the model changed (cached otherwise); fill Max context
-                // with the probed fit so Serve pins the KV pool to what VRAM holds.
+                // Re-probe when the model or a sizing control changed (cached otherwise);
+                // fill Max context with the probed fit so Serve pins the KV pool to
+                // what VRAM holds.
                 const std::uint32_t fit = ensure_probe(hwnd, model);
                 if (fit > 0) {
                     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT),
                                      std::to_wstring(fit).c_str());
                 }
+                return 0;
+            }
+            if (id == IDC_THINKING_CHECK) {
+                // Repopulate the sampling fields with the Qwen preset for the new mode
+                // (checked -> thinking, unchecked -> Instruct). Runs only on the toggle,
+                // so a manual edit survives until the next mode change.
+                const bool thinking =
+                    ::SendMessageW(GetDlgItem(hwnd, IDC_THINKING_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+                apply_sampling_preset(hwnd, thinking);
                 return 0;
             }
             if (id == IDC_SERVE_BUTTON && !g_child.running.load()) {

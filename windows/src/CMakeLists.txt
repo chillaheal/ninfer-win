@@ -167,6 +167,7 @@ add_library(ninfer_ops STATIC
   ops/linear/nvfp4/nvfp4_format.cpp
   ops/linear/nvfp4/nvfp4_gemv.cu
   ops/linear/nvfp4/nvfp4_small_t.cu
+  ops/linear/nvfp4/nvfp4_small_t_cpasync.cu
   ops/linear/nvfp4/nvfp4_w4a4.cu
   ops/linear/nvfp4/nvfp4_dispatch.cpp
   ops/linear/q4/q4_small_t_mma.cu
@@ -344,11 +345,15 @@ if(NINFER_BUILD_SERVE)
     serve/request_log.cpp
     serve/http_server.cpp
     serve/responses_http.cpp
-    serve/serve_options.cpp)
+    serve/serve_options.cpp
+    serve/server_tools.cpp)
   ninfer_internal_includes(ninfer_serve)
   target_include_directories(ninfer_serve PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/cpp-httplib)
   target_link_libraries(ninfer_serve
     PUBLIC ninfer_engine Threads::Threads
-    PRIVATE ninfer_media_acquire CUDA::cudart)
+    # server_tools.cpp drives libcurl directly (media_acquire's PRIVATE link does not
+    # propagate); the target is always defined here — NINFER_BUILD_SERVE and
+    # NINFER_BUILD_MEDIA_ACQUIRE share the same APPS-OR-TESTING condition.
+    PRIVATE ninfer_media_acquire CUDA::cudart PkgConfig::LIBCURL)
 endif()

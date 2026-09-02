@@ -101,6 +101,7 @@ struct VisionWeights {
 
 [[nodiscard]] VisionCommonWeights materialize_vision_common(
     const artifact::MaterializedArtifact& materialized, const VisionBackbonePlan& backbone,
-    const VisionMergerInputPlan& merger_input, const VisionMergerNormPlan& merger_norm);
+    const VisionMergerInputPlan& merger_input, const VisionMergerNormPlan& merger_norm,
+    bool host = false);
 
 } // namespace ninfer::targets::qwen3_6

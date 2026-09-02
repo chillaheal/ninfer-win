@@ -14,11 +14,30 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS::schedule {
+
+// Debug oracle (env-gated, off by default): writes raw BF16 bytes to
+// $NINFER_VISION_DUMP/<dir> so CPU- and GPU-mode encodes can be compared byte-wise
+// (vd_<mode>_patches.bin = the shared host input, vd_<mode>_out.bin = the final handoff).
+// No-op unless the variable is set to a non-empty directory.
+inline void vision_debug_dump(const char* mode, const char* tag, const void* data,
+                              std::size_t bytes) {
+    const char* dir = std::getenv("NINFER_VISION_DUMP");
+    if (dir == nullptr || dir[0] == '\0' || data == nullptr || bytes == 0) { return; }
+    const std::string path = std::string(dir) + "/vd_" + mode + "_" + tag + ".bin";
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    if (file != nullptr) {
+        (void)std::fwrite(data, 1, bytes, file);
+        std::fclose(file);
+    }
+}
 
 struct VisionItemView {
     std::span<const std::uint16_t> patches;
@@ -50,13 +69,18 @@ public:
     [[nodiscard]] static std::size_t workspace_bytes(std::size_t patches,
                                                      std::size_t merged_tokens);
     [[nodiscard]] static VisionWorkspacePlan plan_workspace(std::uint32_t max_merged_tokens,
-                                                            std::size_t general_capacity_bytes);
+                                                            std::size_t general_capacity_bytes,
+                                                            bool include_encode_peak = true);
     [[nodiscard]] static Tensor bind_output(DeviceSpan backing, const VisionWorkspacePlan& plan,
                                             std::size_t merged_tokens);
     void encode(const VisionItemView& item, Tensor& output, DeviceSpan backing,
                 const VisionWorkspacePlan& plan) const;
 
 private:
+    // Cpu-mode encode: runs the full ViT on host FP32 (BF16-snapped at every op boundary) and
+    // H2D-copies the final [out_hidden, tokens] BF16 handoff. No device workspace is consumed.
+    void encode_cpu(const VisionItemView& item, Tensor& output, cudaStream_t stream) const;
+
     struct BlockW {
         const Tensor* norm1_weight    = nullptr;
         const Tensor* norm1_bias      = nullptr;
@@ -82,6 +106,7 @@ private:
     };
 
     DeviceContext& ctx_;
+    bool vision_cpu_                 = false;
     const Weight* patch_embed_      = nullptr;
     const Tensor* patch_embed_bias_ = nullptr;
     const Tensor* position_embed_   = nullptr;

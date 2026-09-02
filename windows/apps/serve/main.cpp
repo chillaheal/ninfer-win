@@ -127,7 +127,7 @@ int run_serve(int argc, char** argv) {
                  << ninfer::context_cost_preset_source_name(context_cost.prefill_source)
                  << " cost-profile=" << context_cost.hardware_class << '/' << context_cost.model_id
                  << '/' << context_cost.weights_id;
-        if (options.enable_vision) {
+        if (options.vision_mode != ninfer::VisionMode::Off) {
             const ninfer::MediaCacheSummary media = service.media_cache_summary();
             capacity << " media-workers=" << media.preprocess_threads
                      << " media-cache=" << format_bytes(media.capacity_bytes)

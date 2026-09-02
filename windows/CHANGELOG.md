@@ -5,7 +5,11 @@ patch = bugfix, minor = new feature, major = breaking change.
 
 ## Unreleased
 
-(nothing yet — next planned: v1.0.1)
+- docs: Playwright MCP browser-automation setup for Claude Code (WINDOWS.md
+  section + project gotcha) — pinned `@playwright/mcp@0.0.80`, headless
+  msedge, user scope, portable Node 24; no code changes to ninfer.
+
+(next planned: v1.0.1)
 
 ## v1.0.0 (2026-08-30)
 

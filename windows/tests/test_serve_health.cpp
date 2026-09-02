@@ -125,6 +125,20 @@ int test_health_payload() {
     failures += check(
         sp.at("bytes").get<std::size_t>() == options.system_prompt_default.size(),
         "system_prompt bytes");
+    // Context accounting: the per-request limit and the reserved KV pool (explicit after serve
+    // normalization) so clients can size their own windows.
+    const Json& ctx = body.at("context");
+    failures += check(ctx.at("max_context").get<std::uint32_t>() == options.max_context,
+                      "context max_context");
+    failures += check(
+        ctx.at("kv_capacity").get<std::uint32_t>() == options.kv_capacity.explicit_tokens,
+        "context kv_capacity explicit");
+    // Automatic KV mode: reported as 0 (the engine resolves the pool at load).
+    ServeOptions auto_kv;
+    auto_kv.kv_capacity = ninfer::KvCapacityPolicy::automatic(0);
+    const Json auto_body = Json::parse(HttpServer::health_payload("m", caps, auto_kv));
+    failures += check(auto_body.at("context").at("kv_capacity").get<std::uint32_t>() == 0,
+                      "automatic kv reported as 0");
 
     // Flag absent: system_prompt omitted entirely.
     ServeOptions no_flag;

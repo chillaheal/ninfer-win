@@ -268,8 +268,17 @@ int run_cli(int argc, char** argv) {
         if (cli.probe_requested) {
             const auto probe_started = Clock::now();
             ninfer::EngineOptions engine_options;
-            engine_options.artifact_path = cli.artifact_path;
-            engine_options.device        = cli.device;
+            engine_options.artifact_path   = cli.artifact_path;
+            engine_options.device          = cli.device;
+            engine_options.enable_vision   = cli.enable_vision;
+            engine_options.vision_cpu      = cli.vision_cpu;
+            // Forward the sizing controls so the fit matches the serve the user is
+            // about to launch (KV bytes/token, MTP reservation, workspace scale).
+            // max_context/kv_capacity are the probe's output, not inputs.
+            engine_options.prefill_chunk   = cli.prefill_chunk;
+            engine_options.kv_cache        = cli.kv_cache;
+            engine_options.speculative     = cli.speculative;
+            engine_options.use_cuda_graph  = cli.use_cuda_graph;
             const ninfer::targets::KvProbeResult probe =
                 ninfer::targets::probe_kv_capacity(engine_options);
             std::cout << "ninfer-probe model=" << probe.model_id << '\n'
@@ -313,6 +322,7 @@ int run_cli(int argc, char** argv) {
         engine_options.kv_cache       = cli.kv_cache;
         engine_options.speculative    = cli.speculative;
         engine_options.enable_vision  = cli.enable_vision;
+        engine_options.vision_cpu     = cli.vision_cpu;
         engine_options.use_cuda_graph = cli.use_cuda_graph;
         // One CLI invocation owns exactly one request, so retained cross-request context has no
         // consumer and must not reserve an extra Device StateImage or run terminal capture.

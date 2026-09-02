@@ -26,7 +26,8 @@ struct Options {
 
     KvCacheStorage kv_cache = KvCacheStorage::BFloat16;
     SpeculativeOptions speculative;
-    bool enable_vision  = false;
+    bool enable_vision  = false; // vision active (Gpu or Cpu)
+    bool vision_cpu     = false; // offload the ViT to host RAM (Cpu)
     bool use_cuda_graph = true;
 
     bool raw_output      = false;

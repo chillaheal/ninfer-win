@@ -11,6 +11,8 @@
 #include <condition_variable>
 #include <chrono>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -23,6 +25,18 @@ namespace ninfer::serve {
 httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions& options,
                                                               const httplib::Request& request,
                                                               httplib::Response& response);
+
+// Result of the emulated Anthropic server-tool loop (web search / web fetch):
+// the model's final phase after all tool round-trips, with usage accumulated
+// across phases. `final_lifetime` holds the final phase's concurrency slot
+// until the response is delivered.
+struct ServerToolLoopResult {
+    GenerationOutcome final_outcome;
+    std::shared_ptr<RequestLifetime> final_lifetime;
+    int input_tokens  = 0; // prompt tokens of the first phase
+    int output_tokens = 0; // completion tokens summed over all phases
+    int phases        = 0;
+};
 
 class HttpServer {
 public:
@@ -48,6 +62,13 @@ private:
     void register_routes();
     void handle_chat_completions(const httplib::Request& req, httplib::Response& res);
     void handle_messages(const httplib::Request& req, httplib::Response& res);
+    // Runs the model through the emulated server-tool loop: every phase that calls one of
+    // `request.server_tools` (within its max_uses budget) has the call executed and the
+    // result fed back as a tool turn before the next phase. Intermediate phases run
+    // non-streamed; their text never reaches the client.
+    ServerToolLoopResult run_server_tool_loop(GenerationRequest& request,
+                                              PreparedRequest& first_prepared,
+                                              const std::function<bool()>& is_cancelled);
     void handle_count_tokens(const httplib::Request& req, httplib::Response& res);
     void handle_responses(const httplib::Request& req, httplib::Response& res);
     void handle_response_input_tokens(const httplib::Request& req, httplib::Response& res);

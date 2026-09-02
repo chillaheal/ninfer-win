@@ -83,6 +83,21 @@ struct ToolCall {
     std::string arguments_json;
 };
 
+// Anthropic server-side tools (web_search_*, url) are executed by the real API.
+// The serve emulates them: a synthesized client-facing ToolDefinition is added to
+// `tools` so the model can call them, and the HTTP layer runs the loop that
+// executes each call and feeds the result back before the final answer.
+enum class ServerToolKind {
+    WebSearch,
+    WebFetch,
+};
+
+struct ServerToolSpec {
+    ServerToolKind kind = ServerToolKind::WebSearch;
+    std::string name; // tool name the model calls (web_search / web_fetch)
+    int max_uses      = 8;
+};
+
 enum class ToolChoiceMode {
     Auto,
     None,
@@ -186,9 +201,18 @@ struct GenerationRequest {
     std::optional<bool> preserve_thinking;
     bool preserve_thinking_semantic_change = false;
     SamplingParams sampling;
+    // Anthropic server-side tools to be executed by the serve (see ServerToolSpec).
+    std::vector<ServerToolSpec> server_tools;
 
     [[nodiscard]] bool uses_tools() const noexcept {
         return !tools.empty() && tool_choice.mode != ToolChoiceMode::None;
+    }
+
+    [[nodiscard]] const ServerToolSpec* find_server_tool(const std::string& name) const {
+        for (const ServerToolSpec& spec : server_tools) {
+            if (spec.name == name) { return &spec; }
+        }
+        return nullptr;
     }
 
     [[nodiscard]] std::size_t media_item_count() const noexcept {

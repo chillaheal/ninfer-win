@@ -29,4 +29,14 @@ class MaterializedArtifact;
                                          ObjectHandle handle, NumericFormat format,
                                          std::int32_t rows, std::int32_t columns);
 
+// Host-resident variants: the Weight/Tensor point into the artifact's retained host bytes
+// (resource_bytes) instead of device memory. Used by the CPU vision path, whose weights are
+// placed Host and read by CPU compute rather than materialized to the device.
+[[nodiscard]] Tensor materialized_host_tensor(const MaterializedArtifact& materialized,
+                                             ObjectHandle handle, NumericFormat format,
+                                             std::initializer_list<std::int32_t> internal_shape);
+[[nodiscard]] Weight materialized_host_weight(const MaterializedArtifact& materialized,
+                                              ObjectHandle handle, NumericFormat format,
+                                              std::int32_t rows, std::int32_t columns);
+
 } // namespace ninfer::artifact

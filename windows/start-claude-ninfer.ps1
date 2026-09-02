@@ -1,9 +1,18 @@
 # start-claude-ninfer.ps1 - launch Claude Code pointed at a local ninfer-serve.
 #
 # The server must already be running (GUI Serve button, or ninfer-serve.exe from
-# dist/). This script only sets the two env vars Claude Code needs and starts
-# claude; it never starts or stops the server itself. No proxy or adapter is
-# required - ninfer-serve speaks the Anthropic Messages protocol natively.
+# dist/). This script only sets the env vars Claude Code needs and starts claude;
+# it never starts or stops the server itself. No proxy or adapter is required -
+# ninfer-serve speaks the Anthropic Messages protocol natively.
+#
+# Context window: when the serve reports its context accounting in /health
+# ({"context": {"max_context": N, "kv_capacity": M}} - all builds from
+# 2026-09-02), the script sizes Claude Code's window to the serve's
+# single-request limit (min of the two) minus a small margin, so compaction
+# can never push a request past what the engine accepts. Set via env vars
+# (CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW), which take
+# precedence over settings.json. Old serve builds without the field launch
+# unchanged (a warning is printed).
 #
 # Usage:
 #   .\start-claude-ninfer.ps1                    # interactive session
@@ -39,6 +48,32 @@ $env:ANTHROPIC_AUTH_TOKEN = "sk-ninfer-local"
 
 # ANTHROPIC_MODEL is intentionally left alone: the server accepts any model string,
 # so an existing config (e.g. unsloth/Qwen3.8-27B-GGUF) works unchanged.
+
+# Size Claude Code's context window to the serve's single-request limit minus a margin.
+# The serve rejects prompts past max_context, and kv_capacity is the token pool it
+# reserved (always >= max_context), so the binding limit is the smaller of the two.
+# The margin keeps compaction output + system prompt inside the window with headroom.
+# Both env vars take precedence over settings.json (the 115000 autoCompactWindow there
+# is the fallback for old serve builds that do not report the context field).
+$Margin = 5000
+$health = $null
+try { $health = $r.Content | ConvertFrom-Json } catch { }
+if ($health -and $health.context -and
+    $health.context.max_context -and $health.context.kv_capacity) {
+    $limit = [math]::Min([int64]$health.context.max_context,
+                         [int64]$health.context.kv_capacity) - $Margin
+    if ($limit -lt 16384) {
+        Write-Warning ("serve context limit {0} is below the minimum usable window - leaving Claude Code's window untouched." -f
+            ([math]::Min([int64]$health.context.max_context, [int64]$health.context.kv_capacity)))
+    } else {
+        $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS  = "$limit"
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$limit"
+        Write-Output ("serve context: max_context={0} kv_capacity={1} -> Claude window {2} (margin {3})" -f
+            $health.context.max_context, $health.context.kv_capacity, $limit, $Margin)
+    }
+} else {
+    Write-Warning "serve /health has no context field (old serve build?) - Claude Code window left at the settings.json value."
+}
 
 # --dangerously-skip-permissions: runs without permission prompts (YOLO mode).
 # Intended for this local, trusted setup against the local ninfer-serve.

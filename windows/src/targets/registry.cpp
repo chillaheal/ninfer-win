@@ -1,4 +1,6 @@
 #include "targets/registry.h"
+#include "targets/qwen3_6_27b/impl/config.h"
+#include "targets/qwen3_6_35b_a3b/impl/config.h"
 
 #include "artifact/binder.h"
 #include "artifact/materializer.h"
@@ -8,6 +10,7 @@
 #include "runtime/engine/context_cost.h"
 #include "runtime/engine/options_normalize.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -162,9 +165,14 @@ ConstructedTarget construct_registered(const EngineOptions& options, DeviceConte
 // minimum reservation (KV cache plus the capacity-scaled attention workspace) fits the budget.
 // Querying the planner per candidate accounts for the max_context-dependent overhead exactly, with
 // no extrapolation across a change in window size.
+//
+// `maximum_context` is the target's native context (its architectural window ceiling): the fit can
+// never exceed it, and the layout validator rejects windows past it, so the search is capped there
+// too (a 1 GiB+ fp8 KV pool on a 32 GiB card would otherwise drive the exponential phase past the
+// ceiling into invalid windows).
 template <class Target>
 KvProbeResult probe_registered(const EngineOptions& options, DeviceContext& device,
-                               artifact::Reader& reader) {
+                               artifact::Reader& reader, std::uint32_t maximum_context) {
     // The probe builds a capacity curve without constructing an Engine, so it applies the same
     // context-cache normalization the Engine constructor would (the layout code requires non-null
     // cache capacities).
@@ -202,8 +210,12 @@ KvProbeResult probe_registered(const EngineOptions& options, DeviceContext& devi
         return static_cast<std::uint64_t>(planner.capacity_curve().minimum_device_reservation_bytes);
     };
 
-    constexpr std::uint32_t kFloorWindow  = 1024;     // smallest window we probe for
+    constexpr std::uint32_t kFloorWindow  = 1024;    // smallest window we probe for
     constexpr std::uint32_t kCeilingProbe = 1u << 20; // generous cap; VRAM binds long before this
+    // The search runs against the smaller of the probe cap and the target's native context:
+    // windows past the native context are rejected by the layout validator, and the fit can
+    // never exceed it anyway.
+    const std::uint32_t ceiling = std::min(kCeilingProbe, maximum_context);
 
     std::uint32_t fit_tokens = 0;
     if (reservation_for(kFloorWindow) <= budget) {
@@ -211,25 +223,27 @@ KvProbeResult probe_registered(const EngineOptions& options, DeviceContext& devi
         // window that does. `lo` always fits, `hi` is the first candidate that does not.
         std::uint32_t lo = kFloorWindow;
         std::uint32_t hi = kFloorWindow * 2U;
-        while (hi < kCeilingProbe && reservation_for(hi) <= budget) {
+        while (hi < ceiling && reservation_for(hi) <= budget) {
             lo = hi;
             hi *= 2U;
         }
-        if (hi >= kCeilingProbe) {
-            fit_tokens = kCeilingProbe; // even the cap fits; report it
-        } else {
-            std::uint32_t best = lo;
-            while (lo + 1 < hi) {
-                const std::uint32_t mid = lo + (hi - lo) / 2U;
-                if (reservation_for(mid) <= budget) {
-                    best = mid;
-                    lo   = mid;
-                } else {
-                    hi = mid;
-                }
-            }
-            fit_tokens = best;
+        if (hi >= ceiling) {
+            // The doubling overshot the ceiling without ever evaluating it (only a fitting hi
+            // doubles), so retarget the search at the ceiling itself: `hi = ceiling + 1` is an
+            // exclusive bound whose mids all stay within [floor, ceiling].
+            hi = ceiling + 1;
         }
+        std::uint32_t best = lo;
+        while (lo + 1 < hi) {
+            const std::uint32_t mid = lo + (hi - lo) / 2U;
+            if (reservation_for(mid) <= budget) {
+                best = mid;
+                lo   = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        fit_tokens = best;
     }
 
     KvProbeResult result;
@@ -312,13 +326,16 @@ KvProbeResult probe_kv_capacity(const EngineOptions& options) {
     artifact::Reader reader(options.artifact_path);
     const auto& identity = reader.identity();
     if (identity.model_id == Qwen3_6_27B::model_id) {
-        return probe_registered<Qwen3_6_27B>(options, device, reader);
+        return probe_registered<Qwen3_6_27B>(options, device, reader,
+                                             qwen3_6_27b::detail::kNativeContext);
     }
     if (identity.model_id == Qwen3_6_27B::qwen3_8_model_id) {
-        return probe_registered<Qwen3_6_27B>(options, device, reader);
+        return probe_registered<Qwen3_6_27B>(options, device, reader,
+                                             qwen3_6_27b::detail::kNativeContext);
     }
     if (identity.model_id == Qwen3_6_35BA3B::model_id) {
-        return probe_registered<Qwen3_6_35BA3B>(options, device, reader);
+        return probe_registered<Qwen3_6_35BA3B>(options, device, reader,
+                                                qwen3_6_35b_a3b::detail::kNativeContext);
     }
     throw std::runtime_error("artifact identity '" + identity.model_id + "/" + identity.weights_id +
                              "' has no registered target for this device");

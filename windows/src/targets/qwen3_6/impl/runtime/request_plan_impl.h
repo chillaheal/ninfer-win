@@ -281,6 +281,11 @@ RequestBasePlan ProgramImplCore::plan_request(const PreparedPromptData& prompt,
         }
         auto vision =
             std::make_shared<qwen3_6::VisionControlPlan>(qwen3_6::plan_vision_control(prompt));
+        // Device encode consumes its workspace layout up front; Cpu-mode encode runs on host
+        // and only the H2D handoff is device-resident (its bytes scale linearly with merged
+        // tokens, so the max_merged_tokens bound alone covers it). A zero encode peak marks
+        // the handoff-only Cpu plan.
+        const bool device_encode = workspace_plan.vision->encode_peak_bytes > 0;
         std::uint32_t previous_end = 0;
         for (std::size_t index = 0; index < vision->items.size(); ++index) {
             const qwen3_6::VisionItemControlPlan& item = vision->items[index];
@@ -292,9 +297,10 @@ RequestBasePlan ProgramImplCore::plan_request(const PreparedPromptData& prompt,
                 throw std::invalid_argument("vision item consumer spans overlap");
             }
             if (item.merged_count > workspace_plan.vision->max_merged_tokens ||
-                schedule::VisionContext::workspace_bytes(prompt.vision_items[index].patch_count,
-                                                         item.merged_count) >
-                    workspace_plan.vision->encode_peak_bytes) {
+                (device_encode &&
+                 schedule::VisionContext::workspace_bytes(prompt.vision_items[index].patch_count,
+                                                          item.merged_count) >
+                     workspace_plan.vision->encode_peak_bytes)) {
                 throw std::invalid_argument("vision item exceeds the Program workspace envelope");
             }
             previous_end = item.token_end;

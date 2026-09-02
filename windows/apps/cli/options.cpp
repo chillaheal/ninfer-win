@@ -156,7 +156,25 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--reasoning-effort") {
             options.reasoning_effort = parse_reasoning_effort(value(arg));
         } else if (arg == "--vision") {
-            options.enable_vision = true;
+            // Bare `--vision` keeps the legacy GPU-mode behavior; `--vision <gpu|cpu|off>`
+            // selects the vision encode host explicitly.
+            std::string mode = "gpu";
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                mode = argv[i + 1];
+                ++i;
+            }
+            if (mode == "gpu" || mode == "GPU" || mode == "Gpu") {
+                options.enable_vision = true;
+            } else if (mode == "cpu" || mode == "CPU" || mode == "Cpu") {
+                options.enable_vision = true;
+                options.vision_cpu = true;
+            } else if (mode == "off" || mode == "OFF" || mode == "Off") {
+                options.enable_vision = false;
+                options.vision_cpu = false;
+            } else {
+                throw std::invalid_argument("--vision mode must be gpu, cpu, or off (got: " +
+                                            mode + ")");
+            }
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--stop-token-id") {

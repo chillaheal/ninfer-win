@@ -101,6 +101,15 @@ struct ContextCostOptions {
     std::filesystem::path preset_path;
 };
 
+// Where the vision encoder (ViT) weights + compute live. Off = vision disabled; Gpu = weights
+// on-device + CUDA encode (the original behavior); Cpu = weights in host RAM + CPU encode, so
+// their VRAM is freed for KV cache.
+enum class VisionMode : std::uint8_t {
+    Off,
+    Gpu,
+    Cpu,
+};
+
 struct EngineOptions {
     std::filesystem::path artifact_path;
     int device                         = 0;
@@ -116,7 +125,12 @@ struct EngineOptions {
     std::size_t media_live_bytes  = kDefaultMediaLiveBytes;
     // Zero selects a bounded worker count from the detected host concurrency.
     std::uint32_t media_preprocess_threads = 0;
+    // Vision active at all (VisionMode::Gpu or Cpu). Paired with vision_cpu to pick the host.
     bool enable_vision                     = false;
+    // Offload the ViT to host RAM (VisionMode::Cpu): weights host-resident + CPU encode, freeing
+    // their VRAM for KV. Only meaningful when enable_vision is true; otherwise the weights are
+    // ValidateOnly.
+    bool vision_cpu                        = false;
     bool use_cuda_graph                    = true;
     ContextCacheOptions context_cache;
     ContextCostOptions context_cost;

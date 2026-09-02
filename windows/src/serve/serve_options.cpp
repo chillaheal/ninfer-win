@@ -63,6 +63,14 @@ KvCapacityPolicy parse_kv_capacity(const char* text) {
     return KvCapacityPolicy::explicit_capacity(static_cast<std::uint32_t>(value));
 }
 
+VisionMode parse_vision_mode(std::string_view mode) {
+    if (mode == "gpu" || mode == "GPU" || mode == "Gpu") { return VisionMode::Gpu; }
+    if (mode == "cpu" || mode == "CPU" || mode == "Cpu") { return VisionMode::Cpu; }
+    if (mode == "off" || mode == "OFF" || mode == "Off") { return VisionMode::Off; }
+    throw std::invalid_argument("--vision mode must be gpu, cpu, or off (got: " +
+                                std::string(mode) + ")");
+}
+
 } // namespace
 
 std::string serve_usage_text(const char* argv0) {
@@ -81,7 +89,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8|fp8] [--spec mtp|dflash --draft-tokens N] "
            "[--default-max-tokens N] [--default-thinking-budget N] "
-           "[--vision] [--no-cuda-graph] [--no-prefix-reuse] "
+           "[--vision [gpu|cpu|off]] [--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
@@ -101,7 +109,8 @@ std::string serve_usage_text(const char* argv0) {
            "       Responses state is process-local and bounded to 1024 records / 256 MiB by "
            "default\n"
            "       --log-stats-interval-ms defaults to 5000; 0 disables periodic throughput logs\n"
-           "       --vision enables media and loads the fixed Vision GPU allocations\n"
+           "       --vision <gpu|cpu|off> enables media; gpu = on-device CUDA encode (default\n"
+           "       for bare --vision), cpu = host-RAM weights + CPU encode (frees VRAM for KV)\n"
            "       --kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom\n"
@@ -313,7 +322,14 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             }
             options.default_thinking_budget = static_cast<std::uint32_t>(budget);
         } else if (arg == "--vision") {
-            options.enable_vision = true;
+            // Bare `--vision` keeps the legacy GPU-mode behavior; `--vision <gpu|cpu|off>`
+            // selects the vision encode host explicitly.
+            std::string mode = "gpu";
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                mode = argv[i + 1];
+                ++i;
+            }
+            options.vision_mode = parse_vision_mode(mode);
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--no-prefix-reuse") {
@@ -402,7 +418,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         throw std::invalid_argument("--prefill-chunk must be a positive multiple of 128");
     }
     product::validate_speculative_cli_options(options.speculative);
-    if (options.speculative.backend == SpeculativeBackend::DFlash && options.enable_vision) {
+    if (options.speculative.backend == SpeculativeBackend::DFlash &&
+        options.vision_mode != VisionMode::Off) {
         throw std::invalid_argument("--spec dflash cannot be combined with --vision");
     }
     if (default_max_tokens_explicit) {

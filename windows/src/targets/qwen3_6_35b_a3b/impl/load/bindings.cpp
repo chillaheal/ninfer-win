@@ -179,9 +179,12 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, qwen3_6::StartupFeature
                                   NumericFormat::W8G32_F16S, mtp_placement);
     out.mtp.final_norm = bind_mtp("mtp/final_norm", NumericFormat::BF16, {2048});
 
+    // Gpu = on-device CUDA encode; Cpu = host-resident weights + CPU encode; Off = validate only.
     const artifact::TensorPlacement vision_placement =
-        features.vision ? artifact::TensorPlacement::Device
-                        : artifact::TensorPlacement::ValidateOnly;
+        !features.vision
+            ? artifact::TensorPlacement::ValidateOnly
+            : features.vision_cpu ? artifact::TensorPlacement::Host
+                                  : artifact::TensorPlacement::Device;
     out.vision_backbone     = qwen3_6::bind_vision_backbone(binder, vision_placement);
     out.vision_merger_input = qwen3_6::bind_vision_merger_input(binder, vision_placement);
     out.vision_merger_fc2   = artifact::bind_tensor(

@@ -4,6 +4,7 @@
 #include "serve/console_log.h"
 #include "serve/openai_schema.h"
 #include "serve/request_log.h"
+#include "serve/server_tools.h"
 #include "serve/translate.h"
 
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -178,6 +180,11 @@ std::string_view unstreamed_content(const GenerationOutcome& outcome) {
     return std::string_view(outcome.text).substr(outcome.streamed_content_bytes);
 }
 
+// Hard cap on the emulated server-tool loop: each phase is a full generation plus (for
+// server-tool calls) external HTTP round-trips, so a runaway model must not hold a
+// concurrency slot indefinitely.
+constexpr int kMaxServerToolPhases = 10;
+
 } // namespace
 
 httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions& options,
@@ -309,6 +316,16 @@ std::string HttpServer::health_payload(const std::string& model_id,
         template_json["reasoning_effort"] = std::move(effort_json);
     }
     body["chat_template"] = std::move(template_json);
+    // The serve's context accounting for clients sizing their own windows: max_context is the
+    // hard per-request limit (prompts past it are rejected) and kv_capacity is the token pool the
+    // engine reserved (always explicit after serve options normalization). Clients bound their
+    // window to min(max_context, kv_capacity).
+    nlohmann::json context_json;
+    context_json["max_context"] = options.max_context;
+    context_json["kv_capacity"] = (options.kv_capacity.mode == ninfer::KvCapacityMode::Explicit)
+                                      ? options.kv_capacity.explicit_tokens
+                                      : std::uint32_t{0};
+    body["context"] = std::move(context_json);
     if (!options.system_prompt_file.empty()) {
         nlohmann::json system_prompt;
         system_prompt["file"]   = options.system_prompt_file;
@@ -662,6 +679,92 @@ void HttpServer::handle_count_tokens(const httplib::Request& req, httplib::Respo
     }
 }
 
+ServerToolLoopResult HttpServer::run_server_tool_loop(GenerationRequest& request,
+                                                      PreparedRequest& first_prepared,
+                                                      const std::function<bool()>& is_cancelled) {
+    ServerToolLoopResult result;
+    PreparedRequest prepared = std::move(first_prepared);
+    result.input_tokens = prepared.prompt_tokens;
+    std::vector<int> uses_left(request.server_tools.size());
+    for (std::size_t index = 0; index < request.server_tools.size(); ++index) {
+        uses_left[index] = request.server_tools[index].max_uses;
+    }
+
+    for (int phase = 0; phase < kMaxServerToolPhases; ++phase) {
+        // Intermediate phases run non-streamed: their text is only ever fed back to the model
+        // as the assistant turn, never to the client.
+        const GenerationOutcome outcome = service_->run(prepared, nullptr, is_cancelled);
+        result.output_tokens += outcome.completion_tokens;
+        ++result.phases;
+
+        std::vector<int> calls_this_phase(request.server_tools.size(), 0);
+        std::vector<const ToolCall*> server_calls;
+        for (const ToolCall& call : outcome.tool_calls) {
+            for (std::size_t index = 0; index < request.server_tools.size(); ++index) {
+                if (request.server_tools[index].name != call.name) { continue; }
+                ++calls_this_phase[index];
+                server_calls.push_back(&call);
+                break;
+            }
+        }
+        bool budget_ok = true;
+        for (std::size_t index = 0; index < request.server_tools.size(); ++index) {
+            if (calls_this_phase[index] > uses_left[index]) { budget_ok = false; break; }
+        }
+        // No server-tool call (the model is answering), over budget, or phase cap:
+        // this phase is the final one.
+        if (server_calls.empty() || !budget_ok || phase == kMaxServerToolPhases - 1) {
+            result.final_outcome  = std::move(outcome);
+            result.final_lifetime = prepared.lifetime;
+            return result;
+        }
+        for (std::size_t index = 0; index < request.server_tools.size(); ++index) {
+            uses_left[index] -= calls_this_phase[index];
+        }
+
+        ChatTurn assistant;
+        assistant.role = ChatRole::Assistant;
+        if (!outcome.text.empty()) {
+            assistant.content.push_back(
+                ContentPart{ContentKind::Text, outcome.text, "text"});
+        }
+        for (const ToolCall& call : outcome.tool_calls) { assistant.tool_calls.push_back(call); }
+        request.messages.push_back(std::move(assistant));
+
+        for (const ToolCall* call : server_calls) {
+            nlohmann::json args = nlohmann::json::object();
+            try {
+                const nlohmann::json parsed = nlohmann::json::parse(call->arguments_json);
+                if (parsed.is_object()) { args = std::move(parsed); }
+            } catch (const std::exception&) { /* malformed arguments -> empty object */ }
+            const bool has_query =
+                args.contains("query") && args.at("query").is_string();
+            const bool has_url = args.contains("url") && args.at("url").is_string();
+            std::string tool_text;
+            for (const ServerToolSpec& spec : request.server_tools) {
+                if (spec.name != call->name) { continue; }
+                tool_text = spec.kind == ServerToolKind::WebSearch
+                               ? run_web_search(has_query ? args.at("query").get<std::string>()
+                                                          : std::string())
+                               : run_web_fetch(has_url ? args.at("url").get<std::string>()
+                                                       : std::string());
+                break;
+            }
+            ChatTurn tool_turn;
+            tool_turn.role         = ChatRole::Tool;
+            tool_turn.tool_call_id = call->id;
+            tool_turn.content.push_back(
+                ContentPart{ContentKind::Text, std::move(tool_text), "text"});
+            request.messages.push_back(std::move(tool_turn));
+        }
+
+        // Next phase: the model sees the tool results and either answers or calls more.
+        prepared = service_->prepare(request, is_cancelled);
+    }
+    // Unreachable: the loop always returns via the phase cap above.
+    return result;
+}
+
 void HttpServer::handle_messages(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json body;
     try {
@@ -723,18 +826,37 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
     log_request_start(log_context);
 
     if (!request.stream) {
+        const std::function<bool()> is_cancelled =
+            [&req] { return req.is_connection_alive && !req.is_connection_alive(); };
+        ServerToolLoopResult loop;
         try {
-            const GenerationOutcome outcome = service_->run(prepared, nullptr, [&req] {
-                return req.is_connection_alive && !req.is_connection_alive();
-            });
-            log_request_done(log_context, outcome);
-            const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
-            const char* stop_reason =
-                messages_stop_reason(outcome.finish_reason, !outcome.tool_calls.empty());
-            set_owned_content(res,
-                              make_messages_response(id, model, outcome.text, outcome.reasoning,
-                                                     outcome.tool_calls, stop_reason, usage),
-                              prepared.lifetime);
+            if (request.server_tools.empty()) {
+                const GenerationOutcome outcome = service_->run(prepared, nullptr, is_cancelled);
+                log_request_done(log_context, outcome);
+                const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
+                const char* stop_reason =
+                    messages_stop_reason(outcome.finish_reason, !outcome.tool_calls.empty());
+                set_owned_content(res,
+                                  make_messages_response(id, model, outcome.text,
+                                                         outcome.reasoning, outcome.tool_calls,
+                                                         stop_reason, usage),
+                                  prepared.lifetime);
+            } else {
+                // Server-tool sub-request (web search / web fetch): run the full loop and
+                // return only the final phase. Claude Code wraps that text into the
+                // client-facing tool result. Reasoning is not part of the wrapped result.
+                loop = run_server_tool_loop(request, prepared, is_cancelled);
+                log_request_done(log_context, loop.final_outcome);
+                const CompletionUsage usage{loop.input_tokens, loop.output_tokens};
+                const char* stop_reason =
+                    messages_stop_reason(loop.final_outcome.finish_reason,
+                                         !loop.final_outcome.tool_calls.empty());
+                set_owned_content(res,
+                                  make_messages_response(id, model, loop.final_outcome.text, "",
+                                                         loop.final_outcome.tool_calls, stop_reason,
+                                                         usage),
+                                  loop.final_lifetime);
+            }
         } catch (const ApiException& e) {
             log_request_error(log_context, e.error().message);
             write_messages_error(res, e.error());
@@ -751,13 +873,18 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
 
     auto stream             = std::make_shared<StreamingRequest>(std::move(prepared));
     const bool tool_capable = stream->prepared.tool_capable;
+    // The provider lambda outlives handle_messages; the server-tool loop appends
+    // assistant/tool turns to the message list as it progresses and needs a non-const
+    // request (a by-value lambda capture is const), so the copy lives behind a shared_ptr.
+    const bool server_tools = !request.server_tools.empty();
+    auto request_box        = std::make_shared<GenerationRequest>(request);
 
     res.set_header("Cache-Control", "no-cache");
     res.set_header("X-Accel-Buffering", "no");
 
     res.set_chunked_content_provider(
         "text/event-stream",
-        [this, stream, id, model, input_tokens, tool_capable,
+        [this, stream, request_box, id, model, input_tokens, tool_capable, server_tools,
          log_context](std::size_t, httplib::DataSink& sink) -> bool {
             if (stream->started) {
                 sink.done();
@@ -772,6 +899,46 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             int text_index     = -1;
             try {
                 write_stream_item(sink, *stream, make_message_start(id, model, input_tokens));
+
+                if (server_tools) {
+                    // Server-tool sub-request: the loop runs the full multi-phase exchange
+                    // here (intermediate phases never stream). The client receives one text
+                    // block with the final phase — the response Claude Code wraps into the
+                    // tool result. `loop` (and its lifetime slot) stays alive until the
+                    // lambda returns, i.e. after the final flush.
+                    const ServerToolLoopResult loop = run_server_tool_loop(
+                        *request_box, stream->prepared, [&stream, &sink] {
+                            return stream->cancelled.load(std::memory_order_acquire) ||
+                                   (sink.is_writable && !sink.is_writable());
+                        });
+                    log_request_done(log_context, loop.final_outcome);
+                    const int idx = next_index++;
+                    write_stream_item(sink, *stream, make_content_block_start_text(idx));
+                    if (!loop.final_outcome.text.empty()) {
+                        write_stream_item(sink, *stream,
+                                          make_content_block_delta_text(idx,
+                                                                        loop.final_outcome.text));
+                    }
+                    write_stream_item(sink, *stream, make_content_block_stop(idx));
+                    for (const ToolCall& call : loop.final_outcome.tool_calls) {
+                        const int tool_idx = next_index++;
+                        write_stream_item(sink, *stream,
+                                          make_content_block_start_tool_use(tool_idx, call));
+                        write_stream_item(sink, *stream,
+                                          make_content_block_delta_tool_json(tool_idx,
+                                                                             call.arguments_json));
+                        write_stream_item(sink, *stream, make_content_block_stop(tool_idx));
+                    }
+                    write_stream_item(
+                        sink, *stream,
+                        make_message_delta(
+                            messages_stop_reason(loop.final_outcome.finish_reason,
+                                                 !loop.final_outcome.tool_calls.empty()),
+                            loop.output_tokens));
+                    write_stream_item(sink, *stream, make_message_stop());
+                    sink.done();
+                    return true;
+                }
 
                 StreamSink output;
                 output.on_reasoning = [&](const std::string& text) {

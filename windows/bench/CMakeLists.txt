@@ -34,6 +34,7 @@ ninfer_add_op_bench(ninfer_cast_bench SOURCES ops/cast_bench.cu)
 ninfer_add_op_bench(ninfer_argmax_bench SOURCES ops/argmax_bench.cu)
 ninfer_add_op_bench(ninfer_causal_conv1d_silu_bench SOURCES ops/causal_conv1d_silu_bench.cu)
 ninfer_add_op_bench(ninfer_linear_bench SOURCES ops/linear_bench.cu)
+ninfer_add_op_bench(ninfer_nvfp4_cpasync_check SOURCES ops/nvfp4_cpasync_check.cu)
 ninfer_add_op_bench(ninfer_output_stage_bench SOURCES ops/output_stage_bench.cu)
 ninfer_add_op_bench(ninfer_gdn_input_proj_bench SOURCES ops/gdn_input_proj_bench.cu)
 ninfer_add_op_bench(ninfer_gdn_input_proj_conv_snapshot_bench
@@ -119,3 +120,18 @@ target_include_directories(ninfer_qwen3_6_35b_a3b_dflash_round_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
 target_link_libraries(ninfer_qwen3_6_35b_a3b_dflash_round_bench PRIVATE
   ninfer_engine ninfer_core)
+
+# Standalone vision-encode A/B tool: mmaps the artifact (only the vision weights + 6 frontend
+# resources are bound/materialized -- no LLM tensors), runs the production frontend prepare()
+# plus VisionContext::encode on the CPU and/or GPU legs, and compares NINFER_VISION_DUMP
+# stage dumps against a golden dump set in-process. Iteration cost ~1 min, no serve restart.
+add_executable(ninfer_vision_encode_ab
+  targets/qwen3_6_27b/vision_encode_ab.cpp)
+target_include_directories(ninfer_vision_encode_ab PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/third_party
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
+target_link_libraries(ninfer_vision_encode_ab PRIVATE
+  ninfer_engine ninfer_core CUDA::cudart)

@@ -146,6 +146,46 @@ ninfer::product::media_acquire::Source parse_image_source(const Json& block) {
 
 // --- request parsing --------------------------------------------------------
 
+// Normalized OpenAI-style function tool object for the emulated server tools.
+// The Qwen template renders them exactly like client tools, so the model calls
+// them through the same tool-call path.
+ToolDefinition make_server_tool_definition(ServerToolKind kind, const std::string& name) {
+    Json function = Json{{"name", name}};
+    std::string description;
+    Json parameters;
+    if (kind == ServerToolKind::WebSearch) {
+        description = "Search the web for the given query. Returns a list of "
+                      "search results, each with a title, URL, and snippet.";
+        parameters =
+            Json{{"type", "object"},
+                 {"properties", Json{{"query",
+                                      Json{{"type", "string"},
+                                           {"description", "The search query."}}}}},
+                 {"required", Json::array({"query"})}};
+    } else {
+        description = "Fetch a web page and return its content as text.";
+        parameters =
+            Json{{"type", "object"},
+                 {"properties", Json{{"url",
+                                      Json{{"type", "string"},
+                                           {"description", "The page URL to fetch."}}},
+                                    {"prompt",
+                                      Json{{"type", "string"},
+                                           {"description", "Optional focus describing what to "
+                                                            "extract from the page."}}}}},
+                 {"required", Json::array({"url"})}};
+    }
+    function["description"] = description;
+    function["parameters"]  = parameters;
+    function["strict"]      = false;
+    ToolDefinition tool;
+    tool.name            = name;
+    tool.description     = description;
+    tool.parameters_json = parameters.dump();
+    tool.definition_json = Json{{"type", "function"}, {"function", std::move(function)}}.dump();
+    return tool;
+}
+
 void parse_tools(const Json& body, GenerationRequest& out) {
     if (!body.contains("tools") || body.at("tools").is_null()) { return; }
     const Json& tools = body.at("tools");
@@ -153,12 +193,48 @@ void parse_tools(const Json& body, GenerationRequest& out) {
     out.tools.reserve(tools.size());
     for (const Json& item : tools) {
         if (!item.is_object()) { bad_request("tools entries must be objects", "tools"); }
-        // Anthropic server/built-in tools carry a `type` and no `input_schema`; we
-        // only support client tools (name + input_schema), which is what Claude
-        // Code sends for its own tools.
+        // Anthropic server/built-in tools carry a `type` and no `input_schema`.
+        // The serve emulates the two Claude Code uses (web search, web fetch) by
+        // adding a synthesized function tool and executing the calls itself.
         if (!item.contains("input_schema") || item.at("input_schema").is_null()) {
-            bad_request("only client tools with an input_schema are supported", "tools",
-                        "tool_type_not_supported");
+            const std::string type =
+                item.contains("type") && item.at("type").is_string()
+                    ? item.at("type").get<std::string>()
+                    : std::string();
+            bool is_server_tool = false;
+            ServerToolKind kind = ServerToolKind::WebSearch;
+            if (type.rfind("web_search", 0) == 0) {
+                kind           = ServerToolKind::WebSearch;
+                is_server_tool = true;
+            } else if (type == "url") {
+                kind           = ServerToolKind::WebFetch;
+                is_server_tool = true;
+            }
+            if (!is_server_tool) {
+                bad_request("only client tools with an input_schema are supported", "tools",
+                            "tool_type_not_supported");
+            }
+            std::string name = kind == ServerToolKind::WebSearch ? "web_search" : "web_fetch";
+            if (item.contains("name") && item.at("name").is_string()) {
+                const std::string provided = item.at("name").get<std::string>();
+                if (!provided.empty()) { name = provided; }
+            }
+            if (!is_valid_function_name(name)) {
+                bad_request("invalid server tool name: " + name, "tools",
+                            "tool_type_not_supported");
+            }
+            int max_uses = 8;
+            if (item.contains("max_uses") && !item.at("max_uses").is_null()) {
+                const std::optional<int> uses = get_int(item, "max_uses");
+                if (!uses || *uses <= 0) {
+                    bad_request("max_uses must be a positive integer", "tools");
+                }
+                max_uses = *uses;
+            }
+            if (max_uses > 16) { max_uses = 16; }
+            out.server_tools.push_back(ServerToolSpec{kind, name, max_uses});
+            out.tools.push_back(make_server_tool_definition(kind, name));
+            continue;
         }
         if (!item.at("input_schema").is_object()) {
             bad_request("tool input_schema must be a JSON object", "tools");
