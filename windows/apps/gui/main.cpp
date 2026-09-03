@@ -327,6 +327,114 @@ void set_status(HWND hwnd, std::wstring_view text) {
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_STATUS_TEXT), std::wstring(text).c_str());
 }
 
+// ---------------------------------------------------------------------------
+// Settings persistence (gui-settings.ini next to this exe). The GUI saves the
+// last USED form state when a serve is launched and restores it at startup.
+// The command-line prefill runs after the restore (WinMain), so the CLI still
+// beats the file. The system prompt / chat template are NOT stored here —
+// they persist in their own files (system-prompt.md / user-picked template).
+// ---------------------------------------------------------------------------
+
+std::wstring settings_path() { return module_dir() + L"gui-settings.ini"; }
+
+// Atomic replace: write <path>.tmp, then MoveFileExW over the target. A torn
+// write would otherwise leave a truncated ini and silently reset the form
+// (the GUI has a crash history — WER 2026-09-02 — so this matters).
+bool write_text_file_atomic(const std::wstring& path, const std::string& bytes) {
+    const std::wstring tmp = path + L".tmp";
+    if (!write_text_file(tmp, bytes)) { return false; }
+    if (!::MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        ::DeleteFileW(tmp.c_str());
+        return false;
+    }
+    return true;
+}
+
+// Restore the saved form state. Runs in WM_CREATE right after the defaults are
+// set, so each remembered key overwrites the default; a missing/unusable file
+// leaves the defaults untouched (today's behavior). Unknown keys and out-of-
+// range combo indices are skipped (forward-compatible).
+void apply_saved_settings(HWND hwnd) {
+    const std::optional<std::string> raw = read_text_file(settings_path());
+    if (!raw || raw->empty()) { return; }
+    bool restored_any = false;
+    std::size_t pos = 0;
+    while (pos < raw->size()) {
+        const std::size_t eol = raw->find('\n', pos);
+        const std::string line =
+            raw->substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        pos = (eol == std::string::npos) ? raw->size() : eol + 1;
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos || eq == 0) { continue; }
+        // Views directly into `line` (alive for the whole loop body). NOT
+        // `line.substr(...)` bound to a string_view -- that view would dangle
+        // at the end of the declaration (std::string::substr returns a
+        // temporary), and the key compare would read freed memory (UB that
+        // broke the restore deterministically per binary, 2026-09-02).
+        const std::string_view key = std::string_view(line).substr(0, eq);
+        std::string_view value = std::string_view(line).substr(eq + 1);
+        if (!value.empty() && value.back() == '\r') { value.remove_suffix(1); }
+        auto set_edit = [&](int id, std::string_view v) {
+            ::SetWindowTextW(GetDlgItem(hwnd, id), utf8_to_wide(v).c_str());
+            restored_any = true;
+        };
+        auto set_combo = [&](int id, std::string_view v) {
+            const int idx = std::atoi(std::string(v).c_str());
+            const int count =
+                static_cast<int>(::SendMessageW(GetDlgItem(hwnd, id), CB_GETCOUNT, 0, 0));
+            if (idx >= 0 && idx < count) {
+                ::SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, idx, 0);
+                restored_any = true;
+            }
+        };
+        // Scope (user decision 2026-09-02): persist the model, last context,
+        // kv dtype (fp8), vision choice and the MTP draft spec. The remaining
+        // sampling fields follow the thinking/vision toggles and are not
+        // persisted; unknown keys (incl. old 18-key files) are ignored.
+        if (key == "model") { set_edit(IDC_MODEL_EDIT, value); }
+        else if (key == "max_context") { set_edit(IDC_MAX_CONTEXT_EDIT, value); }
+        else if (key == "kv_dtype") { set_combo(IDC_KV_DTYPE_COMBO, value); }
+        else if (key == "vision") { set_combo(IDC_VISION_COMBO, value); }
+        else if (key == "spec") { set_combo(IDC_SPEC_COMBO, value); }
+        else if (key == "draft_tokens") { set_edit(IDC_DRAFT_TOKENS_EDIT, value); }
+        // unknown key: ignore
+    }
+    // A saved model path that no longer exists is still prefilled, but the
+    // serve launch would fail obscurely — surface it in the status bar.
+    if (!restored_any) { return; }
+    const std::wstring model = get_control_text(GetDlgItem(hwnd, IDC_MODEL_EDIT));
+    if (!model.empty() && ::GetFileAttributesW(model.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        set_status(hwnd, L"Model file not found: " + model);
+    }
+}
+// Persist the current form state (best-effort: a write failure never blocks
+// the serve launch). Called from the Serve-button handler before serve_child.
+void save_current_settings(HWND hwnd) {
+    const std::wstring model = get_control_text(GetDlgItem(hwnd, IDC_MODEL_EDIT));
+    if (model.empty()) { return; }  // nothing launched without a model; nothing to persist
+    const auto combo_idx = [&](int id) {
+        const LRESULT i = ::SendMessageW(GetDlgItem(hwnd, id), CB_GETCURSEL, 0, 0);
+        return i == CB_ERR ? 0 : static_cast<int>(i);
+    };
+    std::string out;
+    auto line = [&](const char* k, std::string_view v) {
+        out += k;
+        out += '=';
+        out += v;
+        out += '\n';
+    };
+    // Scope (user decision 2026-09-02): the same 6 keys apply_saved_settings
+    // restores — the other fields follow the thinking/vision toggles.
+    line("model", wide_to_utf8(model));
+    line("max_context", wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT))));
+    line("kv_dtype", std::to_string(combo_idx(IDC_KV_DTYPE_COMBO)));
+    line("vision", std::to_string(combo_idx(IDC_VISION_COMBO)));
+    line("spec", std::to_string(combo_idx(IDC_SPEC_COMBO)));
+    line("draft_tokens",
+         wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT))));
+    write_text_file_atomic(settings_path(), out);
+}
+
 // Parse a wide decimal string to an unsigned value; 0 on empty/malformed input.
 std::uint64_t parse_wide_u64(const std::wstring& text) {
     if (text.empty()) { return 0; }
@@ -1231,6 +1339,9 @@ void create_main_controls(HWND hwnd) {
     apply_sampling_preset(hwnd, true);
     ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 1, 0);      // mtp
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"5");
+    // Vision defaults to CPU (task #19): no GPU VRAM needed and A/B-verified
+    // near-identical to the GPU path on this device (2026-09-02).
+    ::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_SETCURSEL, 2, 0);    // cpu
 
     // Status bar (plain static)
     HWND status = ::CreateWindowExW(0, L"STATIC", L"Idle",
@@ -1255,6 +1366,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(info));
             if (info == nullptr) {
                 create_main_controls(hwnd);
+                // Restore the last used settings (file), before the command-line
+                // prefill (CLI) applied in WinMain — CLI beats file beats defaults.
+                apply_saved_settings(hwnd);
             } else if (info->kind == 1) {
                 create_sp_controls(hwnd);
             } else {
@@ -1321,6 +1435,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
             if (id == IDC_SERVE_BUTTON && !g_child.running.load()) {
+                // Persist the last-used form state before launching (on-use save;
+                // best-effort — a write failure never blocks the launch).
+                save_current_settings(hwnd);
                 serve_child(hwnd);
                 return 0;
             }
