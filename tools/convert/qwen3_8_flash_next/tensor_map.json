@@ -1,0 +1,6046 @@
+{
+ "model": "Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration)",
+ "source": "Qwen/Qwen3.8-Flash-Next (official HF, bfloat16)",
+ "index_total_bytes": 359999963128,
+ "total_tensors": 1658,
+ "total_templates": 412,
+ "grand_params_B": 180.0,
+ "grand_bytes_GB": 360.0,
+ "role_totals": {
+  "moe": {
+   "params_B": 121.0949,
+   "bytes_GB": 242.19,
+   "templates": 7,
+   "instances": 336
+  },
+  "ple_ngram": {
+   "params_B": 51.2002,
+   "bytes_GB": 102.4,
+   "templates": 1,
+   "instances": 128
+  },
+  "mtp_moe": {
+   "params_B": 2.5228,
+   "bytes_GB": 5.046,
+   "templates": 7,
+   "instances": 7
+  },
+  "gdn": {
+   "params_B": 2.0865,
+   "bytes_GB": 4.173,
+   "templates": 9,
+   "instances": 324
+  },
+  "lc_hc": {
+   "params_B": 0.6406,
+   "bytes_GB": 1.281,
+   "templates": 11,
+   "instances": 387
+  },
+  "lm_head": {
+   "params_B": 0.6357,
+   "bytes_GB": 1.271,
+   "templates": 1,
+   "instances": 1
+  },
+  "embed": {
+   "params_B": 0.6357,
+   "bytes_GB": 1.271,
+   "templates": 1,
+   "instances": 1
+  },
+  "full_attn": {
+   "params_B": 0.5977,
+   "bytes_GB": 1.195,
+   "templates": 6,
+   "instances": 72
+  },
+  "visual": {
+   "params_B": 0.4489,
+   "bytes_GB": 0.898,
+   "templates": 333,
+   "instances": 333
+  },
+  "mtp_full_attn": {
+   "params_B": 0.0514,
+   "bytes_GB": 0.103,
+   "templates": 9,
+   "instances": 9
+  },
+  "ple": {
+   "params_B": 0.0328,
+   "bytes_GB": 0.066,
+   "templates": 9,
+   "instances": 9
+  },
+  "qsa_indexer": {
+   "params_B": 0.0197,
+   "bytes_GB": 0.039,
+   "templates": 3,
+   "instances": 36
+  },
+  "mtp_other": {
+   "params_B": 0.0132,
+   "bytes_GB": 0.026,
+   "templates": 8,
+   "instances": 8
+  },
+  "mtp_proj": {
+   "params_B": 0.0131,
+   "bytes_GB": 0.026,
+   "templates": 4,
+   "instances": 4
+  },
+  "mtp_hc": {
+   "params_B": 0.0066,
+   "bytes_GB": 0.013,
+   "templates": 3,
+   "instances": 3
+  }
+ },
+ "templates": [
+  {
+   "role": "lm_head",
+   "subrole": "output_head",
+   "template": "lm_head.weight",
+   "dtype": "BF16",
+   "shape": [
+    248320,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 635699200,
+   "total_params": 635699200,
+   "total_bytes": 1271398400,
+   "n_files": 1
+  },
+  {
+   "role": "embed",
+   "subrole": "input_embedding",
+   "template": "model.language_model.embed_tokens.weight",
+   "dtype": "BF16",
+   "shape": [
+    248320,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 635699200,
+   "total_params": 635699200,
+   "total_bytes": 1271398400,
+   "n_files": 1
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "global_mixer",
+   "template": "model.language_model.hyper_connection_mixer.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "global_mixer",
+   "template": "model.language_model.hyper_connection_mixer.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "global_mixer",
+   "template": "model.language_model.hyper_connection_mixer.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.attn_hyper_connection.block_inject_weight.weight",
+   "dtype": "BF16",
+   "shape": [
+    4,
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 40960,
+   "total_params": 1966080,
+   "total_bytes": 3932160,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.attn_hyper_connection.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 10240,
+   "total_params": 491520,
+   "total_bytes": 983040,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.attn_hyper_connection.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 3276800,
+   "total_params": 157286400,
+   "total_bytes": 314572800,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.attn_hyper_connection.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 48,
+   "params_per_instance": 3276800,
+   "total_params": 157286400,
+   "total_bytes": 314572800,
+   "n_files": 48
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.A_log",
+   "dtype": "BF16",
+   "shape": [
+    48
+   ],
+   "n_instances": 36,
+   "params_per_instance": 48,
+   "total_params": 1728,
+   "total_bytes": 3456,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.conv1d.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    1,
+    4
+   ],
+   "n_instances": 36,
+   "params_per_instance": 40960,
+   "total_params": 1474560,
+   "total_bytes": 2949120,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.dt_bias",
+   "dtype": "BF16",
+   "shape": [
+    48
+   ],
+   "n_instances": 36,
+   "params_per_instance": 48,
+   "total_params": 1728,
+   "total_bytes": 3456,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.in_proj_a.weight",
+   "dtype": "BF16",
+   "shape": [
+    48,
+    2560
+   ],
+   "n_instances": 36,
+   "params_per_instance": 122880,
+   "total_params": 4423680,
+   "total_bytes": 8847360,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.in_proj_b.weight",
+   "dtype": "BF16",
+   "shape": [
+    48,
+    2560
+   ],
+   "n_instances": 36,
+   "params_per_instance": 122880,
+   "total_params": 4423680,
+   "total_bytes": 8847360,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.in_proj_qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    2560
+   ],
+   "n_instances": 36,
+   "params_per_instance": 26214400,
+   "total_params": 943718400,
+   "total_bytes": 1887436800,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.in_proj_z.weight",
+   "dtype": "BF16",
+   "shape": [
+    6144,
+    2560
+   ],
+   "n_instances": 36,
+   "params_per_instance": 15728640,
+   "total_params": 566231040,
+   "total_bytes": 1132462080,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    128
+   ],
+   "n_instances": 36,
+   "params_per_instance": 128,
+   "total_params": 4608,
+   "total_bytes": 9216,
+   "n_files": 36
+  },
+  {
+   "role": "gdn",
+   "subrole": "linear_attention",
+   "template": "model.language_model.layers.L.linear_attn.out_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    6144
+   ],
+   "n_instances": 36,
+   "params_per_instance": 15728640,
+   "total_params": 566231040,
+   "total_bytes": 1132462080,
+   "n_files": 36
+  },
+  {
+   "role": "moe",
+   "subrole": "experts",
+   "template": "model.language_model.layers.L.mlp.experts.down_proj",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560,
+    640
+   ],
+   "n_instances": 48,
+   "params_per_instance": 838860800,
+   "total_params": 40265318400,
+   "total_bytes": 80530636800,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "experts",
+   "template": "model.language_model.layers.L.mlp.experts.gate_up_proj",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    1280,
+    2560
+   ],
+   "n_instances": 48,
+   "params_per_instance": 1677721600,
+   "total_params": 80530636800,
+   "total_bytes": 161061273600,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "router",
+   "template": "model.language_model.layers.L.mlp.gate.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 48,
+   "params_per_instance": 1310720,
+   "total_params": 62914560,
+   "total_bytes": 125829120,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "shared_expert",
+   "template": "model.language_model.layers.L.mlp.shared_expert.down_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    640
+   ],
+   "n_instances": 48,
+   "params_per_instance": 1638400,
+   "total_params": 78643200,
+   "total_bytes": 157286400,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "shared_expert",
+   "template": "model.language_model.layers.L.mlp.shared_expert.gate_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 48,
+   "params_per_instance": 1638400,
+   "total_params": 78643200,
+   "total_bytes": 157286400,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "shared_expert",
+   "template": "model.language_model.layers.L.mlp.shared_expert.up_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 48,
+   "params_per_instance": 1638400,
+   "total_params": 78643200,
+   "total_bytes": 157286400,
+   "n_files": 48
+  },
+  {
+   "role": "moe",
+   "subrole": "shared_expert",
+   "template": "model.language_model.layers.L.mlp.shared_expert_gate.weight",
+   "dtype": "BF16",
+   "shape": [
+    1,
+    2560
+   ],
+   "n_instances": 48,
+   "params_per_instance": 2560,
+   "total_params": 122880,
+   "total_bytes": 245760,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.mlp_hyper_connection.block_inject_weight.weight",
+   "dtype": "BF16",
+   "shape": [
+    4,
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 40960,
+   "total_params": 1966080,
+   "total_bytes": 3932160,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.mlp_hyper_connection.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 10240,
+   "total_params": 491520,
+   "total_bytes": 983040,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.mlp_hyper_connection.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 48,
+   "params_per_instance": 3276800,
+   "total_params": 157286400,
+   "total_bytes": 314572800,
+   "n_files": 48
+  },
+  {
+   "role": "lc_hc",
+   "subrole": "per_layer",
+   "template": "model.language_model.layers.L.mlp_hyper_connection.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 48,
+   "params_per_instance": 3276800,
+   "total_params": 157286400,
+   "total_bytes": 314572800,
+   "n_files": 48
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.conv1d.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    1,
+    4
+   ],
+   "n_instances": 1,
+   "params_per_instance": 40960,
+   "total_params": 40960,
+   "total_bytes": 81920,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.key_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 26214400,
+   "total_params": 26214400,
+   "total_bytes": 52428800,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.norm_conv.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.norm_key.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.norm_query.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.ple_embedding.layer_multipliers",
+   "dtype": "I64",
+   "shape": [
+    3
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3,
+   "total_params": 3,
+   "total_bytes": 24,
+   "n_files": 1
+  },
+  {
+   "role": "ple_ngram",
+   "subrole": "ngram_embedding_shard",
+   "template": "model.language_model.layers.L.ple.ple_embedding.ngram_embedding.shard_S.weight",
+   "dtype": "BF16",
+   "shape": [
+    2500012,
+    160
+   ],
+   "n_instances": 128,
+   "params_per_instance": 400001920,
+   "total_params": 51200245760,
+   "total_bytes": 102400491520,
+   "n_files": 33
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.ple_embedding.ngram_heads_offsets",
+   "dtype": "I64",
+   "shape": [
+    16
+   ],
+   "n_instances": 1,
+   "params_per_instance": 16,
+   "total_params": 16,
+   "total_bytes": 128,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.ple_embedding.ngram_heads_vocab_sizes",
+   "dtype": "I64",
+   "shape": [
+    16
+   ],
+   "n_instances": 1,
+   "params_per_instance": 16,
+   "total_params": 16,
+   "total_bytes": 128,
+   "n_files": 1
+  },
+  {
+   "role": "ple",
+   "subrole": "projection",
+   "template": "model.language_model.layers.L.ple.value_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 6553600,
+   "total_params": 6553600,
+   "total_bytes": 13107200,
+   "n_files": 1
+  },
+  {
+   "role": "qsa_indexer",
+   "subrole": "indexer",
+   "template": "model.language_model.layers.L.self_attn.indexer.index_qk_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 12,
+   "params_per_instance": 1638400,
+   "total_params": 19660800,
+   "total_bytes": 39321600,
+   "n_files": 12
+  },
+  {
+   "role": "qsa_indexer",
+   "subrole": "indexer",
+   "template": "model.language_model.layers.L.self_attn.indexer.k_layernorm.weight",
+   "dtype": "BF16",
+   "shape": [
+    128
+   ],
+   "n_instances": 12,
+   "params_per_instance": 128,
+   "total_params": 1536,
+   "total_bytes": 3072,
+   "n_files": 12
+  },
+  {
+   "role": "qsa_indexer",
+   "subrole": "indexer",
+   "template": "model.language_model.layers.L.self_attn.indexer.q_layernorm.weight",
+   "dtype": "BF16",
+   "shape": [
+    128
+   ],
+   "n_instances": 12,
+   "params_per_instance": 128,
+   "total_params": 1536,
+   "total_bytes": 3072,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.k_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    256
+   ],
+   "n_instances": 12,
+   "params_per_instance": 256,
+   "total_params": 3072,
+   "total_bytes": 6144,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.k_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 12,
+   "params_per_instance": 1310720,
+   "total_params": 15728640,
+   "total_bytes": 31457280,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.o_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    6144
+   ],
+   "n_instances": 12,
+   "params_per_instance": 15728640,
+   "total_params": 188743680,
+   "total_bytes": 377487360,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.q_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    256
+   ],
+   "n_instances": 12,
+   "params_per_instance": 256,
+   "total_params": 3072,
+   "total_bytes": 6144,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.q_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    12288,
+    2560
+   ],
+   "n_instances": 12,
+   "params_per_instance": 31457280,
+   "total_params": 377487360,
+   "total_bytes": 754974720,
+   "n_files": 12
+  },
+  {
+   "role": "full_attn",
+   "subrole": "attention",
+   "template": "model.language_model.layers.L.self_attn.v_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 12,
+   "params_per_instance": 1310720,
+   "total_params": 15728640,
+   "total_bytes": 31457280,
+   "n_files": 12
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.0.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.1.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.10.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.11.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.12.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.13.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.14.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.15.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.16.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.17.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.18.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.19.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.2.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.20.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.21.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.22.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.23.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.24.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.25.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.26.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.3.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.4.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.5.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.6.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.7.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.8.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.attn.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.attn.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1327104,
+   "total_params": 1327104,
+   "total_bytes": 2654208,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.attn.qkv.bias",
+   "dtype": "BF16",
+   "shape": [
+    3456
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3456,
+   "total_params": 3456,
+   "total_bytes": 6912,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.attn.qkv.weight",
+   "dtype": "BF16",
+   "shape": [
+    3456,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3981312,
+   "total_params": 3981312,
+   "total_bytes": 7962624,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.mlp.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4304,
+   "total_params": 4304,
+   "total_bytes": 8608,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.mlp.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.mlp.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.mlp.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    4304
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4958208,
+   "total_params": 4958208,
+   "total_bytes": 9916416,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.norm1.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.norm1.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.norm2.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.blocks.9.norm2.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.linear_fc1.bias",
+   "dtype": "BF16",
+   "shape": [
+    4608
+   ],
+   "n_instances": 1,
+   "params_per_instance": 4608,
+   "total_params": 4608,
+   "total_bytes": 9216,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.linear_fc1.weight",
+   "dtype": "BF16",
+   "shape": [
+    4608,
+    4608
+   ],
+   "n_instances": 1,
+   "params_per_instance": 21233664,
+   "total_params": 21233664,
+   "total_bytes": 42467328,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.linear_fc2.bias",
+   "dtype": "BF16",
+   "shape": [
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 2560,
+   "total_params": 2560,
+   "total_bytes": 5120,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.linear_fc2.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    4608
+   ],
+   "n_instances": 1,
+   "params_per_instance": 11796480,
+   "total_params": 11796480,
+   "total_bytes": 23592960,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.norm.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.merger.norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.patch_embed.proj.bias",
+   "dtype": "BF16",
+   "shape": [
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1152,
+   "total_params": 1152,
+   "total_bytes": 2304,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.patch_embed.proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    1152,
+    3,
+    2,
+    16,
+    16
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1769472,
+   "total_params": 1769472,
+   "total_bytes": 3538944,
+   "n_files": 1
+  },
+  {
+   "role": "visual",
+   "subrole": "vit",
+   "template": "model.visual.pos_embed.weight",
+   "dtype": "BF16",
+   "shape": [
+    2304,
+    1152
+   ],
+   "n_instances": 1,
+   "params_per_instance": 2654208,
+   "total_params": 2654208,
+   "total_bytes": 5308416,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_proj",
+   "subrole": "projection",
+   "template": "mtp.fc_embedding.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 6553600,
+   "total_params": 6553600,
+   "total_bytes": 13107200,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_proj",
+   "subrole": "projection",
+   "template": "mtp.fc_hidden.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 6553600,
+   "total_params": 6553600,
+   "total_bytes": 13107200,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_hc",
+   "subrole": "hyper_connection",
+   "template": "mtp.hyper_connection_mixer.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_hc",
+   "subrole": "hyper_connection",
+   "template": "mtp.hyper_connection_mixer.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_hc",
+   "subrole": "hyper_connection",
+   "template": "mtp.hyper_connection_mixer.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.attn_hyper_connection.block_inject_weight.weight",
+   "dtype": "BF16",
+   "shape": [
+    4,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 40960,
+   "total_params": 40960,
+   "total_bytes": 81920,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.attn_hyper_connection.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.attn_hyper_connection.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.attn_hyper_connection.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "experts",
+   "template": "mtp.layers.L.mlp.experts.down_proj",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560,
+    640
+   ],
+   "n_instances": 1,
+   "params_per_instance": 838860800,
+   "total_params": 838860800,
+   "total_bytes": 1677721600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "experts",
+   "template": "mtp.layers.L.mlp.experts.gate_up_proj",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    1280,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1677721600,
+   "total_params": 1677721600,
+   "total_bytes": 3355443200,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "router",
+   "template": "mtp.layers.L.mlp.gate.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1310720,
+   "total_params": 1310720,
+   "total_bytes": 2621440,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "shared_expert",
+   "template": "mtp.layers.L.mlp.shared_expert.down_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    640
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1638400,
+   "total_params": 1638400,
+   "total_bytes": 3276800,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "shared_expert",
+   "template": "mtp.layers.L.mlp.shared_expert.gate_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1638400,
+   "total_params": 1638400,
+   "total_bytes": 3276800,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "shared_expert",
+   "template": "mtp.layers.L.mlp.shared_expert.up_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1638400,
+   "total_params": 1638400,
+   "total_bytes": 3276800,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_moe",
+   "subrole": "shared_expert",
+   "template": "mtp.layers.L.mlp.shared_expert_gate.weight",
+   "dtype": "BF16",
+   "shape": [
+    1,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 2560,
+   "total_params": 2560,
+   "total_bytes": 5120,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.mlp_hyper_connection.block_inject_weight.weight",
+   "dtype": "BF16",
+   "shape": [
+    4,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 40960,
+   "total_params": 40960,
+   "total_bytes": 81920,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.mlp_hyper_connection.hc_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.mlp_hyper_connection.input_mix_weight_down.weight",
+   "dtype": "BF16",
+   "shape": [
+    320,
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_other",
+   "subrole": "other",
+   "template": "mtp.layers.L.mlp_hyper_connection.input_mix_weight_up.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240,
+    320
+   ],
+   "n_instances": 1,
+   "params_per_instance": 3276800,
+   "total_params": 3276800,
+   "total_bytes": 6553600,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "indexer",
+   "template": "mtp.layers.L.self_attn.indexer.index_qk_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    640,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1638400,
+   "total_params": 1638400,
+   "total_bytes": 3276800,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "indexer",
+   "template": "mtp.layers.L.self_attn.indexer.k_layernorm.weight",
+   "dtype": "BF16",
+   "shape": [
+    128
+   ],
+   "n_instances": 1,
+   "params_per_instance": 128,
+   "total_params": 128,
+   "total_bytes": 256,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "indexer",
+   "template": "mtp.layers.L.self_attn.indexer.q_layernorm.weight",
+   "dtype": "BF16",
+   "shape": [
+    128
+   ],
+   "n_instances": 1,
+   "params_per_instance": 128,
+   "total_params": 128,
+   "total_bytes": 256,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.k_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    256
+   ],
+   "n_instances": 1,
+   "params_per_instance": 256,
+   "total_params": 256,
+   "total_bytes": 512,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.k_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1310720,
+   "total_params": 1310720,
+   "total_bytes": 2621440,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.o_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560,
+    6144
+   ],
+   "n_instances": 1,
+   "params_per_instance": 15728640,
+   "total_params": 15728640,
+   "total_bytes": 31457280,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.q_norm.weight",
+   "dtype": "BF16",
+   "shape": [
+    256
+   ],
+   "n_instances": 1,
+   "params_per_instance": 256,
+   "total_params": 256,
+   "total_bytes": 512,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.q_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    12288,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 31457280,
+   "total_params": 31457280,
+   "total_bytes": 62914560,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_full_attn",
+   "subrole": "attention",
+   "template": "mtp.layers.L.self_attn.v_proj.weight",
+   "dtype": "BF16",
+   "shape": [
+    512,
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 1310720,
+   "total_params": 1310720,
+   "total_bytes": 2621440,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_proj",
+   "subrole": "projection",
+   "template": "mtp.pre_fc_norm_embedding.weight",
+   "dtype": "BF16",
+   "shape": [
+    2560
+   ],
+   "n_instances": 1,
+   "params_per_instance": 2560,
+   "total_params": 2560,
+   "total_bytes": 5120,
+   "n_files": 1
+  },
+  {
+   "role": "mtp_proj",
+   "subrole": "projection",
+   "template": "mtp.pre_fc_norm_hidden.weight",
+   "dtype": "BF16",
+   "shape": [
+    10240
+   ],
+   "n_instances": 1,
+   "params_per_instance": 10240,
+   "total_params": 10240,
+   "total_bytes": 20480,
+   "n_files": 1
+  }
+ ]
+}
