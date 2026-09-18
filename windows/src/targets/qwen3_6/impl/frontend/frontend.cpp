@@ -2,6 +2,7 @@
 
 #include <ninfer/targets/qwen3_6/frontend_resources.h>
 #include <ninfer/targets/qwen3_6/prepared_prompt.h>
+#include <ninfer/types.h>
 
 #include "targets/qwen3_6/impl/frontend/chat_template.h"
 #include "targets/qwen3_6/impl/frontend/media_cache.h"
@@ -18,6 +19,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -399,7 +401,7 @@ void append_delta(PublishedOutput& output, OutputChannel channel, std::string te
     }
 }
 
-std::size_t valid_utf8_prefix_size(std::string_view bytes) {
+std::size_t valid_utf8_prefix_size(std::string_view bytes, std::uint32_t committed_tokens) {
     std::size_t offset = 0;
     while (offset < bytes.size()) {
         const auto lead         = static_cast<unsigned char>(bytes[offset]);
@@ -422,20 +424,25 @@ std::size_t valid_utf8_prefix_size(std::string_view bytes) {
             codepoint = lead & 0x07U;
             minimum   = 0x10000U;
         } else {
-            throw std::invalid_argument("invalid UTF-8 leading byte in generated token stream");
+            throw ninfer::RequestError(ninfer::RequestErrorKind::CorruptGeneratedToken,
+                                       "invalid UTF-8 leading byte in generated token stream at "
+                                       "token " + std::to_string(committed_tokens));
         }
         if (offset + length > bytes.size()) { return offset; }
         for (std::size_t index = 1; index < length; ++index) {
             const auto byte = static_cast<unsigned char>(bytes[offset + index]);
             if ((byte & 0xc0U) != 0x80U) {
-                throw std::invalid_argument(
-                    "invalid UTF-8 continuation byte in generated token stream");
+                throw ninfer::RequestError(ninfer::RequestErrorKind::CorruptGeneratedToken,
+                                           "invalid UTF-8 continuation byte in generated token "
+                                           "stream at token " + std::to_string(committed_tokens));
             }
             codepoint = (codepoint << 6U) | (byte & 0x3fU);
         }
         if (codepoint < minimum || (codepoint >= 0xd800U && codepoint <= 0xdfffU) ||
             codepoint > 0x10ffffU) {
-            throw std::invalid_argument("invalid UTF-8 codepoint in generated token stream");
+            throw ninfer::RequestError(ninfer::RequestErrorKind::CorruptGeneratedToken,
+                                       "invalid UTF-8 codepoint in generated token stream at "
+                                       "token " + std::to_string(committed_tokens));
         }
         offset += length;
     }
@@ -604,7 +611,7 @@ void feed_token_bytes(DecoderState& state, std::string_view bytes, const StopPol
                       PublishedOutput& emitted, std::uint32_t committed_tokens,
                       StopMatch* best_match) {
     state.utf8_pending.append(bytes);
-    const std::size_t valid = valid_utf8_prefix_size(state.utf8_pending);
+    const std::size_t valid = valid_utf8_prefix_size(state.utf8_pending, committed_tokens);
     if (valid == 0) { return; }
     const std::string text = state.utf8_pending.substr(0, valid);
     state.utf8_pending.erase(0, valid);
@@ -892,6 +899,10 @@ public:
     SemanticThinkingState preview_semantic;
     PublishedOutput preview_output;
     bool preview_ready = false;
+    // Fault injection (verification only): throw a CorruptGeneratedToken RequestError when the
+    // Nth generated token of a decode round is processed. 0 disables; set via
+    // NINFER_FAULT_INJECT_UTF8 at OutputSession construction.
+    std::uint32_t fault_utf8_at_token = 0;
 };
 
 std::span<const std::int32_t> PreparedPromptData::position_axis(int axis) const {
@@ -1031,6 +1042,12 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         StopMatch match;
         const std::string_view bytes =
             !impl_->preserve_special && decoded.special ? std::string_view{} : decoded.bytes;
+        if (impl_->fault_utf8_at_token != 0 && count == impl_->fault_utf8_at_token) {
+            throw ninfer::RequestError(ninfer::RequestErrorKind::CorruptGeneratedToken,
+                                       "fault injection: invalid UTF-8 simulated at generated "
+                                       "token " + std::to_string(count) + " (id " +
+                                       std::to_string(token) + ")");
+        }
         feed_token_bytes(impl_->preview_state, bytes, impl_->policy, impl_->preview_output, count,
                          &match);
 
@@ -1400,9 +1417,17 @@ OutputSession Frontend::make_output_session(const PreparedPrompt& prompt,
     if (prompt.data_ == nullptr) { throw std::invalid_argument("prepared prompt is empty"); }
     StopPolicy policy = merge_stop_policy(*impl_->tokenizer, caller_stop);
     if (output.raw) { policy.publish_stop_token = true; }
-    return OutputSession(std::make_unique<OutputSession::Impl>(
+    OutputSession session(std::make_unique<OutputSession::Impl>(
         impl_->tokenizer, std::move(policy), output, prompt.data_->starts_in_reasoning, thinking,
         impl_->thinking_control_tokens));
+    if (const char* fault = std::getenv("NINFER_FAULT_INJECT_UTF8")) {
+        try {
+            const std::uint32_t position = static_cast<std::uint32_t>(std::stoul(fault));
+            if (position != 0) { session.impl_->fault_utf8_at_token = position; }
+        } catch (...) {
+        }
+    }
+    return session;
 }
 
 const StopPolicy& Frontend::default_stop_policy() const noexcept { return impl_->defaults; }

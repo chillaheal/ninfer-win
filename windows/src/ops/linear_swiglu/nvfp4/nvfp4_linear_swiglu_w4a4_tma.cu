@@ -70,14 +70,12 @@ void launch_nvfp4_linear_swiglu_w4a4_tma(const std::uint8_t* activation_codes,
     constexpr int kPairN = M256N128S3::kBlockN / 2;
     const dim3 grid((Geometry::kOutputRows / 2) / kPairN, tokens / M256N128S3::kBlockM);
 #if defined(_MSC_VER)
-    // Windows: stage the descriptors in device memory (see the kernel signature for why they
-    // cannot be passed by value). Stream-ordered alloc/copy/free keep the object alive for the
-    // whole launch without coupling it to this function's host stack. The pageable-source copy
-    // synchronizes with the host, so host_descriptors is safe to drop when this returns.
-    const Nvfp4W4a4TmaDescriptors host_descriptors =
-        make_descriptors<Geometry, M256N128S3>(activation_codes, activation_scales, weight_codes,
-                                               weight_scales, tokens);
-    Nvfp4W4a4TmaDescriptors* device_descriptors   = nullptr;
+    // MSVC's x64 ABI cannot pass an alignas(128) struct by value through the generated kernel
+    // host wrapper (C2719). Stage the descriptors in device memory and pass a pointer (see the
+    // kernel signature). Stream-ordered alloc/copy/free keep the object alive for the launch.
+    const Nvfp4W4a4TmaDescriptors host_descriptors = make_descriptors<Geometry, M256N128S3>(
+        activation_codes, activation_scales, weight_codes, weight_scales, tokens);
+    Nvfp4W4a4TmaDescriptors* device_descriptors    = nullptr;
     CUDA_CHECK(cudaMallocAsync(&device_descriptors, sizeof(Nvfp4W4a4TmaDescriptors), stream));
     CUDA_CHECK(cudaMemcpyAsync(device_descriptors, &host_descriptors,
                                sizeof(Nvfp4W4a4TmaDescriptors), cudaMemcpyHostToDevice, stream));

@@ -148,6 +148,23 @@ Streaming begins with an assistant-role chunk, sends separate reasoning and cont
 finish-reason chunk and `[DONE]`. When `stream_options.include_usage` is true, a final empty
 `choices` chunk contains completed usage.
 
+The `usage` object on terminal responses and the dedicated usage chunk reports:
+
+```json
+{
+  "prompt_tokens": 42,
+  "completion_tokens": 12,
+  "total_tokens": 54,
+  "prompt_tokens_details": {"cached_tokens": 17}
+}
+```
+
+`prompt_tokens_details.cached_tokens` is the exact prompt prefix the Engine supplied from its
+prefix (KV) cache — the same value the Responses API reports as
+`input_tokens_details.cached_tokens` and the request log records as
+`result.prefix_cache_hit_tokens`. It is bounded by `prompt_tokens`; 0 means the request
+prefilled its full prompt.
+
 ### Multimodal request
 
 Start the server with `--vision` before sending media:
@@ -521,7 +538,7 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--media-cache-mib N` | LRU-retained prepared BF16 media payloads; `0` disables retention | `1024` |
 | `--media-live-mib N` | all live prepared BF16 media payloads | `2048` |
 | `--media-preprocess-threads N` | bounded media preprocessing workers; `0` selects at most 16 from host concurrency | `0` |
-| `--request-log-jsonl FILE` | append full-precision server/request records | disabled |
+| `--request-log-jsonl FILE\|off` | append full-precision server/request records; `off` disables it | `ninfer-serve-request.jsonl` next to the serve binary |
 | `--response-store-max-records N` | maximum locally retained Responses objects | `1024` |
 | `--response-store-max-mib N` | total local Response envelope/Item/context budget | `256` |
 | `--kv-dtype bf16\|int8\|fp8` | KV-cache storage | `bf16` |
@@ -587,13 +604,15 @@ Run `./build/apps/ninfer-serve --help` for the exact option contract.
 
 ## Structured request log
 
-`--request-log-jsonl FILE` enables the machine-readable measurement log. The server opens `FILE`
-in append mode and flushes every event, so successive model or MTP blocks may share one campaign
-file. The parent directory must already exist. Failure to open the file aborts startup; the log path
-is also rejected if it resolves to the model artifact.
-
-Add `--request-log-jsonl profiles/bench/run/server.requests.jsonl` to the startup command to write
-the log at that path.
+The machine-readable measurement log is **enabled by default**: the server appends to
+`ninfer-serve-request.jsonl` next to the running `ninfer-serve.exe` binary. The Windows GUI
+reads that ledger to render its read-only Usage block (today/week/month/total token counts and
+decode rate), so a serve started without the flag still contributes to it. Pass
+`--request-log-jsonl FILE` to write the log at another path (e.g. a per-benchmark campaign file),
+and `--request-log-jsonl off` to disable it. The server opens the file in append mode and flushes
+every event, so successive model or MTP blocks may share one campaign file. The parent directory
+must already exist. Failure to open the file aborts startup; the log path is also rejected if it
+resolves to the model artifact.
 
 Every line is one `ninfer_serve_request_log` schema-v17 JSON object. All events carry
 `timestamp_unix_ms` and a process-unique `server_instance_id`; request IDs are monotonic only within

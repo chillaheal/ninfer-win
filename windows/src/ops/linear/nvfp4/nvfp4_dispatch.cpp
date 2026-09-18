@@ -6,7 +6,6 @@
 #include "ops/linear/nvfp4/nvfp4_w4a4_plan.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstdint>
 #include <stdexcept>
 
@@ -43,13 +42,6 @@ Nvfp4LinearRoute resolve_route(std::int32_t output_rows, std::int32_t input_rows
 }
 
 void launch_a16(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
-    // NINFER_NVFP4_CPASYNC=1 routes the A16 small-T path through the cp.async-staged kernel
-    // (bit-identical math, weight codes staged to shared memory). Default is the legacy
-    // ld.global.cg kernel; the gate exists to A/B the two per-shape before committing.
-    static const bool kUseCpAsync = [] {
-        const char* value = std::getenv("NINFER_NVFP4_CPASYNC");
-        return value != nullptr && value[0] == '1';
-    }();
     constexpr std::int32_t kChunk = kNvfp4LastSmallT;
     for (std::int32_t token_begin = 0; token_begin < x.ne[1]; token_begin += kChunk) {
         const std::int32_t active = std::min(kChunk, x.ne[1] - token_begin);
@@ -61,8 +53,6 @@ void launch_a16(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t
         Tensor output_chunk(output, DType::BF16, {weight.n, active});
         if (active == 1) {
             launch_nvfp4_decode(input_chunk, weight, output_chunk, stream);
-        } else if (kUseCpAsync) {
-            launch_nvfp4_small_t_cpasync(input_chunk, weight, output_chunk, stream);
         } else {
             launch_nvfp4_small_t(input_chunk, weight, output_chunk, stream);
         }

@@ -604,6 +604,7 @@ public:
     const ProposalHead proposal_head;
     const bool vision_enabled;
     const bool use_cuda_graph;
+    const bool ngram;
     const std::size_t kv_payload_bytes;
     const std::size_t graph_allowance_bytes;
     const WorkspacePlan workspace_plan;
@@ -1110,7 +1111,7 @@ private:
                                         std::uint32_t backend_pages);
     void bind_sequence_kv(SequenceState& sequence);
     void unbind_sequence_kv(SequenceState& sequence) noexcept;
-    void materialize_sequence_kv(SequenceState& sequence, std::uint32_t main_tokens,
+    void ensure_sequence_kv_mapped(SequenceState& sequence, std::uint32_t main_tokens,
                                  std::uint32_t backend_tokens = 0);
     void trim_sequence_kv(SequenceState& sequence, std::uint32_t main_tokens,
                           std::uint32_t backend_tokens = 0);

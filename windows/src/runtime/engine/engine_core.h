@@ -1639,7 +1639,36 @@ private:
         auto pending = instance_.program->decode(
             membership.sequence_span(), membership.budget_span(), &program_call.failed_timing());
         program_call.finish(pending.execution_timing());
-        commit_pending(std::move(pending), membership.lane_span(), true, cancelled_at_unit_start);
+        try {
+            commit_pending(std::move(pending), membership.lane_span(), true,
+                           cancelled_at_unit_start);
+        } catch (const RequestError& error) {
+            // A corrupt generated token (the frontend decoded invalid UTF-8 out of the
+            // sampled bytes) is a per-request defect, not engine corruption. commit_pending's
+            // catch has already completed the resource-level teardown for this round: the
+            // frontend's real state is intact at the pre-round point (the throw happened on
+            // the preview copy, and preview_ready is still false), the round's KV is gone
+            // (program->abort_pending -> clear_lane: lifecycle Empty, resources released),
+            // and the resource lane is already Free and unoccupied
+            // (resources_.apply_discard -> release_cancelled_lane). So there is no
+            // resources_.abort here — it requires an active lane and would throw. Only the
+            // request/scheduler-side bookkeeping remains, mirroring cancel_active_requests.
+            // Multi-lane rounds and requests holding a reserved capture stay engine-fatal.
+            if (error.kind() != RequestErrorKind::CorruptGeneratedToken || membership.size != 1 ||
+                instance_.program->has_context_transaction()) {
+                throw;
+            }
+            const std::uint32_t lane = membership.lane_span()[0];
+            const auto& request = slots_[lane];
+            if (request->capture_pending) { throw; }
+            (void)request->output.preview_terminal(FinishReason::Cancelled);
+            if (scheduler_.prefill_lane() == lane) { scheduler_.clear_prefill_lane(lane); }
+            append_output(request, request->output.commit_preview());
+            complete_error(request, std::current_exception());
+            remove_completed_slot(lane);
+            publish_runtime_stats();
+            return;
+        }
         publish_runtime_stats();
     }
 

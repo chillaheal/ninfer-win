@@ -29,15 +29,20 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <iterator>
 #include <istream>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <time.h>
 #include <vector>
 #include <wchar.h>
 
@@ -104,11 +109,23 @@ enum : UINT {
     // Sampling preset fields (2026-09-01): the thinking checkbox drives these defaults.
     IDC_MIN_P_EDIT,               // 142
     IDC_PRESENCE_PENALTY_EDIT,    // 143
+    // Usage tracking (D11):
+    IDC_USAGE_TEXT,               // 144 — read-only usage/rate block below the status bar
+    // Default thinking budget (2026-09-05): editable cap passed to the serve as
+    // --default-thinking-budget; an empty field omits the flag (unlimited).
+    IDC_THINKING_BUDGET_EDIT,         // 145
+    // Frequency-penalty sampling override (2026-09-17): empty field omits the
+    // --frequency-penalty flag so the serve default applies.
+    IDC_FREQUENCY_PENALTY_EDIT,       // 146
 };
 
 constexpr UINT WM_APP_DONE = WM_APP + 1;  // wParam: serve exit code (main window only)
 
 constexpr wchar_t kWindowClass[] = L"NinferGuiWindow";
+// User-facing product identity (title bar + dialog captions). The on-disk exe
+// name stays Ninfer.exe (deploy/e2e/kill-by-name logic reference it). v1.0.2 =
+// fork changelog version for the "Ninfer AI" rename + usage-stats change.
+constexpr wchar_t kAppIdentity[] = L"Ninfer AI v1.0.2";
 
 // Per-window routing tag (set from the CreateWindowExW lpParam into GWLP_USERDATA
 // at WM_CREATE): nullptr = main window; kind 1 = system-prompt editor; kind 2 =
@@ -387,16 +404,26 @@ void apply_saved_settings(HWND hwnd) {
                 restored_any = true;
             }
         };
-        // Scope (user decision 2026-09-02): persist the model, last context,
-        // kv dtype (fp8), vision choice and the MTP draft spec. The remaining
-        // sampling fields follow the thinking/vision toggles and are not
-        // persisted; unknown keys (incl. old 18-key files) are ignored.
+        auto set_check = [&](int id, std::string_view v) {
+            const std::string on = std::string(v);
+            ::SendMessageW(GetDlgItem(hwnd, id), BM_SETCHECK,
+                           (on == "1" || on == "on" || on == "true") ? BST_CHECKED : BST_UNCHECKED, 0);
+            restored_any = true;
+        };
+        // Scope (user decision 2026-09-02, extended 2026-09-05): persist the
+        // model, last context, kv dtype (fp8), vision choice, the MTP draft spec
+        // and the thinking budget. The remaining sampling fields follow the
+        // thinking/vision toggles and are not persisted; unknown keys (incl. old
+        // 18-key files) are ignored.
         if (key == "model") { set_edit(IDC_MODEL_EDIT, value); }
         else if (key == "max_context") { set_edit(IDC_MAX_CONTEXT_EDIT, value); }
         else if (key == "kv_dtype") { set_combo(IDC_KV_DTYPE_COMBO, value); }
         else if (key == "vision") { set_combo(IDC_VISION_COMBO, value); }
         else if (key == "spec") { set_combo(IDC_SPEC_COMBO, value); }
         else if (key == "draft_tokens") { set_edit(IDC_DRAFT_TOKENS_EDIT, value); }
+        else if (key == "thinking_budget") { set_edit(IDC_THINKING_BUDGET_EDIT, value); }
+        else if (key == "host") { set_edit(IDC_HOST_EDIT, value); }
+        else if (key == "port") { set_edit(IDC_PORT_EDIT, value); }
         // unknown key: ignore
     }
     // A saved model path that no longer exists is still prefilled, but the
@@ -423,8 +450,9 @@ void save_current_settings(HWND hwnd) {
         out += v;
         out += '\n';
     };
-    // Scope (user decision 2026-09-02): the same 6 keys apply_saved_settings
-    // restores — the other fields follow the thinking/vision toggles.
+    // Scope (user decision 2026-09-02, extended 2026-09-05 with thinking_budget):
+    // the same 7 keys apply_saved_settings restores — the other fields follow the
+    // thinking/vision toggles.
     line("model", wide_to_utf8(model));
     line("max_context", wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT))));
     line("kv_dtype", std::to_string(combo_idx(IDC_KV_DTYPE_COMBO)));
@@ -432,6 +460,10 @@ void save_current_settings(HWND hwnd) {
     line("spec", std::to_string(combo_idx(IDC_SPEC_COMBO)));
     line("draft_tokens",
          wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT))));
+    line("thinking_budget",
+         wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_THINKING_BUDGET_EDIT))));
+    line("host", wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_HOST_EDIT))));
+    line("port", wide_to_utf8(get_control_text(GetDlgItem(hwnd, IDC_PORT_EDIT))));
     write_text_file_atomic(settings_path(), out);
 }
 
@@ -445,6 +477,17 @@ std::uint64_t parse_wide_u64(const std::wstring& text) {
     return static_cast<std::uint64_t>(value);
 }
 
+// Strip spaces and tabs so a typed thousands separator ("130 000") parses as one
+// number - wcstoull stops at the first space and would read 130.
+std::wstring strip_wide_spaces(const std::wstring& text) {
+    std::wstring out;
+    out.reserve(text.size());
+    for (const wchar_t ch : text) {
+        if (ch != L' ' && ch != L'\t') { out.push_back(ch); }
+    }
+    return out;
+}
+
 // Qwen's recommended sampling presets (match the engine's per-target defaults in
 // package.cpp). The thinking checkbox drives these: checked -> thinking preset,
 // unchecked -> Instruct (non-thinking) preset. The fields stay user-editable; this
@@ -455,16 +498,41 @@ void apply_sampling_preset(HWND hwnd, bool thinking) {
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_TOP_K_EDIT), L"20");
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MIN_P_EDIT), L"0.0");
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_PRESENCE_PENALTY_EDIT), thinking ? L"0.0" : L"1.5");
+    // Frequency penalty: neutral 0.0 by default (no-op); raising it (0.3-0.7 typical)
+    // damps tokens that recur often in the context.
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_FREQUENCY_PENALTY_EDIT), L"0.0");
+}
+
+// Per-model sizing defaults (2026-09-12, updated 2026-09-13): when a browsed model is a
+// dflash2 artifact, pin its serve-ready defaults - the dflash2 spec backend, an fp8 KV
+// cache, the 262k window, and 7 draft tokens. Every other model keeps the Qwen3.8-27B
+// defaults already seeded at startup (mtp spec, fp8 KV). Every field stays user-overridable;
+// a typed context up to the probed fit launches as-is.
+void apply_model_sizing_defaults(HWND hwnd, const std::wstring& model) {
+    // Only the dflash2 family carries dedicated serving defaults; every other model
+    // keeps the Qwen3.8-27B defaults seeded at startup.
+    if (model.find(L"dflash2") != std::wstring::npos) {
+        ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 3, 0);    // dflash2
+        ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
+        ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"262144");
+        ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"7");
+    } else {
+        // Every other model keeps the Qwen3.8-27B defaults already seeded at
+        // startup (mtp spec, fp8 KV).
+        ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 1, 0);    // mtp
+        ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
+    }
 }
 
 // Append the sampling flags read from the form controls. Empty fields are
 // omitted so engine/model defaults apply. When `fit` is nonzero (a successful
-// VRAM probe), the probed KV fit is pinned as an explicit --kv-capacity and the
-// requested max-context is clamped down to it — the pool must hold the whole
-// sequence window, so a context larger than the pool would be rejected. The
-// capacity curve also caps the pool at max_context x max_concurrency, so the
-// window must be at least the pool: serve_child widens the window control to
-// the probed fit before calling here (the Auto button does the same).
+// VRAM probe), the KV pool is pinned to the effective context window - the
+// requested max-context (spaces stripped) clamped down to the fit. A context
+// larger than the pool is rejected (the pool must hold the whole sequence
+// window), and with concurrency 1 the capacity curve caps the pool at
+// max_context, so pool == window; a pool no wider than the probed fit fits
+// VRAM by construction. A user-set context below the fit therefore launches
+// as-is with a smaller pool instead of being widened to the fit.
 void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint32_t fit = 0) {
     std::wstring max_ctx      = get_control_text(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT));
     const std::wstring temp    = get_control_text(GetDlgItem(hwnd, IDC_TEMPERATURE_EDIT));
@@ -474,6 +542,7 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
     const std::wstring presence= get_control_text(GetDlgItem(hwnd, IDC_PRESENCE_PENALTY_EDIT));
     const std::wstring seed    = get_control_text(GetDlgItem(hwnd, IDC_SEED_EDIT));
     const std::wstring draft   = get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT));
+    const std::wstring budget  = get_control_text(GetDlgItem(hwnd, IDC_THINKING_BUDGET_EDIT));
 
     const int kv_idx   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_GETCURSEL, 0, 0));
     const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
@@ -485,13 +554,16 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
         ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
 
     if (fit > 0) {
-        // Pin the KV pool to the probed fit; clamp the requested context to it so the
-        // engine's kv_capacity >= max_context invariant holds and launch proceeds.
+        // Pin the KV pool to the effective window (requested context clamped to
+        // the probed fit; empty or non-numeric field = the fit itself). This
+        // keeps the engine's pool/window invariants (see the function comment)
+        // while honoring a user-set context below the fit.
+        std::uint64_t window =
+            max_ctx.empty() ? fit : parse_wide_u64(strip_wide_spaces(max_ctx));
+        if (window == 0 || window > fit) { window = fit; }
         args.push_back(L"--kv-capacity");
-        args.push_back(std::to_wstring(fit));
-        if (!max_ctx.empty() && parse_wide_u64(max_ctx) > fit) {
-            max_ctx = std::to_wstring(fit);
-        }
+        args.push_back(std::to_wstring(window));
+        if (!max_ctx.empty()) { max_ctx = std::to_wstring(window); }
     }
     if (!max_ctx.empty()) { args.push_back(L"--max-context"); args.push_back(max_ctx); }
     if (kv_idx > 0) {
@@ -513,13 +585,18 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
         args.push_back(kVisionRegimes[vision_mode - 1]);
     }
     if (spec_idx > 0) {
-        static const wchar_t* kSpecs[] = {L"mtp", L"dflash"};
+        // dflash2+ngram (combo index 4) reuses the dflash2 backend and adds ngram
+        // self-speculation; it reuses the draft-tokens (K) field.
+        static const wchar_t* kSpecs[] = {L"mtp", L"dflash", L"dflash2", L"dflash2", L"dflash2"};
         args.push_back(L"--spec");
         args.push_back(kSpecs[spec_idx - 1]);
+        if (spec_idx == 4) { args.push_back(L"--ngram"); }  // dflash2+ngram
         if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
         if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
     }
     if (!seed.empty()) { args.push_back(L"--seed"); args.push_back(seed); }
+    // Validated up front in serve_child (digits, 1..u32max); empty omits the flag.
+    if (!budget.empty()) { args.push_back(L"--default-thinking-budget"); args.push_back(budget); }
 }
 
 std::wstring build_command_line(const std::vector<std::wstring>& args) {
@@ -605,9 +682,12 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
         args.push_back(kKvDtypes[kv_idx - 1]);
     }
     if (spec_idx > 0) {
-        static const wchar_t* kSpecs[] = {L"mtp", L"dflash"};
+        // dflash2+ngram (combo index 4) reuses the dflash2 backend and adds ngram
+        // self-speculation; it reuses the draft-tokens (K) field.
+        static const wchar_t* kSpecs[] = {L"mtp", L"dflash", L"dflash2", L"dflash2", L"dflash2"};
         args.push_back(L"--spec");
         args.push_back(kSpecs[spec_idx - 1]);
+        if (spec_idx == 4) { args.push_back(L"--ngram"); }  // dflash2+ngram
         if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
         if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
     }
@@ -803,12 +883,29 @@ void serve_child(HWND hwnd) {
         }
     }
 
-    // The engine rejects dflash + vision (cli/serve option validation); surface
-    // it up front instead of dying at child launch.
+    // The serve rejects a thinking budget of 0 or out of u32 range; surface it up
+    // front like the port check. An empty field means "no default budget" and
+    // simply omits --default-thinking-budget (thinking stays uncapped).
+    const std::wstring budget = get_control_text(GetDlgItem(hwnd, IDC_THINKING_BUDGET_EDIT));
+    if (!budget.empty()) {
+        std::uint64_t v = 0;
+        for (wchar_t ch : budget) {
+            if (ch < L'0' || ch > L'9') { v = UINT64_MAX; break; }
+            v = v * 10 + static_cast<std::uint64_t>(ch - L'0');
+            if (v > 4294967295ULL) { v = UINT64_MAX; break; }  // u32 ceiling
+        }
+        if (v == 0 || v == UINT64_MAX) {
+            set_status(hwnd, L"Error: thinking budget must be a number between 1 and 4294967295");
+            return;
+        }
+    }
+
+    // The engine rejects dflash/dflash2 + vision (cli/serve option validation);
+    // surface it up front instead of dying at child launch.
     const int spec_sel   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
     const int vision_sel = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
-    if (spec_sel == 2 /* dflash */ && vision_sel != 0 /* off */) {
-        set_status(hwnd, L"dflash cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
+    if ((spec_sel == 2 /* dflash */ || spec_sel == 3 /* dflash2 */ || spec_sel == 4 /* dflash2+ngram */) && vision_sel != 0 /* off */) {
+        set_status(hwnd, L"dflash/dflash2 cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
         return;
     }
 
@@ -827,16 +924,17 @@ void serve_child(HWND hwnd) {
     const std::uint32_t fit = ensure_probe(hwnd, model);
     if (fit == 0) { return; }
     std::wstring extra_status;
-    const std::uint64_t requested_ctx = parse_wide_u64(get_control_text(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT)));
+    std::wstring max_ctx = get_control_text(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT));
+    const std::uint64_t requested_ctx = parse_wide_u64(strip_wide_spaces(max_ctx));
     if (requested_ctx > fit) {
         extra_status = L"Warning: context " + std::to_wstring(requested_ctx) +
                        L" exceeds VRAM fit ~" + std::to_wstring(fit) + L"; clamped to fit.";
-    }
-    if (requested_ctx < fit) {
-        // The other direction of the pool/window invariant: the engine's capacity
-        // curve caps the KV pool at max_context x max_concurrency (concurrency is 1
-        // here), so a pool wider than the context window is rejected at launch.
-        // Widen the window to the probed fit - the same thing the Auto button does.
+        max_ctx = std::to_wstring(fit);
+        ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), max_ctx.c_str());
+    } else if (requested_ctx == 0) {
+        // Empty (or non-numeric) field = auto: fill it with the probed fit, the
+        // same thing the Auto button does. A user-set context below the fit is
+        // kept as-is - append_sampling_args pins the KV pool to that window.
         ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), std::to_wstring(fit).c_str());
     }
 
@@ -1228,6 +1326,495 @@ void open_template_editor(HWND main_hwnd) {
 // Main window controls (D3: serve launcher layout, no one-shot panes)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Usage tracking (D11, reworked 2026-09-05 per user spec): the serve appends
+// full-precision request records to ninfer-serve-request.jsonl next to its own
+// binary by default (opt-out: --request-log-jsonl off). This block tails that
+// ledger and folds request_done records into per-local-day buckets; a 3 s
+// timer on the main window refreshes the read-only usage static. Every request
+// the user runs flows through a serve, so this covers all of it.
+//
+// Display semantics (2026-09-05): the displayed totals (today/week/month/total)
+// count DECODE tokens only — the prompt sum is the re-sent conversation history
+// (hundreds of times larger than the output) and is not a meaningful usage
+// total. The rates are rolling 10-minute averages: prompt tok/s = COMPUTED
+// (non-cached) prefill tokens / 600 s — real prefill work, prefix-cache resends
+// excluded ("riktig prefill/sek"); decode tok/s = completion / decode seconds
+// (engine throughput).
+//
+// Persistence (2026-09-09): the day buckets and the consumed offset per
+// ledger file live in gui-usage-state.json (atomic replace, next to this
+// exe). The serve rotates its log at 10 MiB (base -> .1 -> .2; files older
+// than 7 days are dropped), and the buckets must SURVIVE that — a ledger
+// file alone can never reconstruct a month of usage. Each file is tracked
+// by a fingerprint (its first 256 bytes, stable across the rotation
+// renames), so every scan — and a GUI restart — folds only each file's new
+// tail and never re-reads ledger history. week/month are calendar windows
+// (the running week Mon-Sun / the running month), not rolling 7/30 days.
+// Before this the tailer wiped all buckets when the base file shrank after
+// a rotation, so week/month/total showed only the ~15 h in the base file
+// (2026-09-09: 822K displayed vs 3.98M actually used).
+// ---------------------------------------------------------------------------
+
+struct UsageDay {
+    std::uint64_t completion_tokens      = 0;
+    std::uint64_t requests               = 0;
+};
+
+struct UsageTotals {
+    std::uint64_t completion_tokens      = 0;
+    std::uint64_t requests               = 0;
+};
+
+// Rolling 10-minute window for the live rates: one entry per request_done
+// (ledger timestamp, computed prefill tokens, completion tokens, decode
+// seconds). Entries age out at every 3 s scan; after a GUI restart the
+// window warms from whatever new ledger tail arrives (the persisted
+// per-file offsets mean history is NOT re-folded into it).
+struct UsageRecent {
+    std::time_t   ts;
+    std::uint64_t computed_prefill_tokens;
+    std::uint64_t completion_tokens;
+    double        decode_seconds;
+};
+
+// Consumed ledger bytes per ledger file, plus the last scan the file was
+// readable (prunes entries the serve has dropped).
+struct UsageFileOffset {
+    std::uint64_t offset    = 0;
+    std::uint64_t last_seen = 0;  // epoch seconds of the last successful read
+};
+
+struct UsageState {
+    // Ledger bytes consumed, keyed by the file's pipeline position ("base" =
+    // the active file, "one" = .1 newest rotated, "two" = .2 oldest). Keyed by
+    // position rather than the file's first 256 bytes: the three files can
+    // share an identical head (files written before the serve started emitting
+    // a per-file marker), which would collapse them into one offset and
+    // re-fold the tails every scan. A rotation is detected from the base
+    // shrinking below its consumed offset, and the offsets then shift
+    // two<-one<-base<-0 so each file's consumed bytes follow its content down
+    // the base -> .1 -> .2 pipeline. Offsets always sit on a '\n' boundary: a
+    // trailing partial line is re-read on the next scan.
+    std::map<std::string, UsageFileOffset> file_offsets;
+    std::map<std::string, UsageDay> by_day;  // "YYYY-MM-DD", local time
+    std::deque<UsageRecent> recent;            // last-10-min rate window
+    // Rate-hold (user spec 2026-09-05: no call within 10 s -> rate stays as
+    // before): the last-shown window sums; a rolling window would fade out the
+    // moment traffic stops, so idle display holds these until new activity.
+    std::uint64_t shown_prompt_tokens       = 0;
+    std::uint64_t shown_completion_tokens   = 0;
+    double        shown_decode_seconds      = 0.0;
+    bool          shown_rate_valid          = false;
+};
+
+UsageState g_usage {};
+HFONT g_usage_font = nullptr;  // larger face for the usage block (D11)
+constexpr std::int64_t kUsageRateWindowSec = 600;  // "senaste 10 min"
+constexpr std::int64_t kUsageActivityHoldSec = 10; // rate holds when idle (no
+                                                    // request_done within 10 s)
+constexpr std::uint64_t kUsageFileOffsetGraceSec = 8 * 86400;  // an offset is
+                                                               // only needed
+                                                               // while its file
+                                                               // can exist (7
+                                                               // days + 1)
+
+std::wstring usage_state_path() { return module_dir() + L"gui-usage-state.json"; }
+
+// Restore the persisted usage state (day buckets + per-file consumed
+// offsets). A missing/corrupt file leaves everything fresh — the one-time
+// fold of the existing ledger files then rebuilds the buckets.
+void usage_state_load() {
+    const std::optional<std::string> raw = read_text_file(usage_state_path());
+    if (!raw || raw->empty()) { return; }
+    nlohmann::json doc;
+    try {
+        doc = nlohmann::json::parse(raw->data());
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    if (!doc.is_object()) { return; }
+    if (const nlohmann::json* days =
+            doc.contains("days") ? &doc["days"] : nullptr;
+        days && days->is_object()) {
+        for (auto it = days->begin(); it != days->end(); ++it) {
+            const nlohmann::json& v = it.value();
+            if (!v.is_array() || v.size() != 2 || !v[0].is_number_unsigned() ||
+                !v[1].is_number_unsigned()) {
+                continue;
+            }
+            g_usage.by_day[it.key()] = {v[0].get<std::uint64_t>(),
+                                        v[1].get<std::uint64_t>()};
+        }
+    }
+    if (const nlohmann::json* files =
+            doc.contains("files") ? &doc["files"] : nullptr;
+        files && files->is_object()) {
+        for (auto it = files->begin(); it != files->end(); ++it) {
+            const nlohmann::json& v = it.value();
+            if (!v.is_array() || v.size() != 2 || !v[0].is_number_unsigned() ||
+                !v[1].is_number_unsigned()) {
+                continue;
+            }
+            g_usage.file_offsets[it.key()] = {v[0].get<std::uint64_t>(),
+                                              v[1].get<std::uint64_t>()};
+        }
+    }
+    // A pre-2026-09-11 state keyed the offsets by the file's 256-byte head; the head
+    // collision inflated those day buckets. If any loaded offset key is not a pipeline
+    // tag, the whole state is from that buggy era: discard the buckets and the offsets
+    // so the first scan re-folds the ledger from the start (the true totals).
+    bool any_legacy_offset = false;
+    for (const auto& entry : g_usage.file_offsets) {
+        if (entry.first != "base" && entry.first != "one" && entry.first != "two") {
+            any_legacy_offset = true;
+            break;
+        }
+    }
+    if (any_legacy_offset) {
+        g_usage.file_offsets.clear();
+        g_usage.by_day.clear();
+    }
+}
+
+// Persist the usage state (best-effort, every scan): atomic replace so the
+// GUI's crash history (WER 0xC0000409) can never leave a torn file. Day
+// buckets are kept forever (a year is a few KB) so "total" stays a true
+// all-time sum — the ledger itself only spans 7 days, so the buckets are the
+// only long-term record.
+void usage_state_save() {
+    nlohmann::json days = nlohmann::json::object();
+    for (const auto& entry : g_usage.by_day) {
+        days[entry.first] = nlohmann::json::array(
+            {entry.second.completion_tokens, entry.second.requests});
+    }
+    nlohmann::json files = nlohmann::json::object();
+    const std::uint64_t now_epoch = static_cast<std::uint64_t>(std::time(nullptr));
+    for (auto it = g_usage.file_offsets.begin(); it != g_usage.file_offsets.end();) {
+        // An offset is only needed while its file can still exist: the
+        // serve keeps rotated files 7 days, so an entry unseen for 8 days is
+        // stale. The grace also spans transient open failures (the entry is
+        // kept, not lost).
+        if (it->second.last_seen + kUsageFileOffsetGraceSec < now_epoch) {
+            it = g_usage.file_offsets.erase(it);
+        } else {
+            files[it->first] = nlohmann::json::array(
+                {it->second.offset, it->second.last_seen});
+            ++it;
+        }
+    }
+    nlohmann::json doc = nlohmann::json::object();
+    doc["days"] = std::move(days);
+    doc["files"] = std::move(files);
+    (void)write_text_file_atomic(usage_state_path(), doc.dump());
+}
+
+std::string usage_day_key_local(std::time_t seconds) {
+    std::tm tm {};
+    localtime_s(&tm, &seconds);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1,
+                  tm.tm_mday);
+    return buf;
+}
+
+// Day keys for the running calendar window, oldest first: the week = this
+// Monday through today (the week runs Mon-Sun); the month = the 1st through
+// today. The week/month labels promise calendar windows, not rolling
+// 7/30-day sums (2026-09-09).
+std::vector<std::string> usage_calendar_day_keys(bool week) {
+    const std::time_t now = std::time(nullptr);
+    std::tm t {};
+    localtime_s(&t, &now);
+    std::tm start = t;
+    if (week) {
+        start.tm_mday -= (t.tm_wday + 6) % 7;  // Mon -> 0 back, Sun -> 6 back
+    } else {
+        start.tm_mday = 1;
+    }
+    const std::time_t start_ts = mktime(&start);  // normalizes the day walk
+    std::vector<std::string> keys;
+    for (std::time_t d = start_ts; d <= now; d += 86400) {
+        keys.push_back(usage_day_key_local(d));
+    }
+    return keys;
+}
+
+std::wstring usage_fmt_tokens(std::uint64_t v) {
+    wchar_t buf[24];
+    if (v < 1000) {
+        std::swprintf(buf, std::size(buf), L"%llu", static_cast<unsigned long long>(v));
+    } else if (v < 1000000) {
+        std::swprintf(buf, std::size(buf), L"%lluK", static_cast<unsigned long long>(
+            std::llround(static_cast<double>(v) / 1000.0)));
+    } else {
+        std::swprintf(buf, std::size(buf), L"%.2fM", static_cast<double>(v) / 1000000.0);
+    }
+    return buf;
+}
+
+// Live rates over the rolling 10-minute window (user spec 2026-09-05):
+//  decode tok/s = completion tokens / decode seconds of the window's requests
+//                 (the engine throughput the serve stats show);
+//  prompt tok/s = computed (non-cached) prefill tokens / 600 s — the real
+//                 prefill work rate over the wall-clock window. Prompt resends
+//                 that hit the prefix cache are NOT counted (user spec
+//                 2026-09-05: "riktig prefill/sek"); the wall-clock
+//                 denominator keeps the figure stable even when most of the
+//                 prompt is cached.
+struct UsageRate {
+    std::uint64_t computed_prefill_tokens = 0;
+    std::uint64_t completion_tokens       = 0;
+    double        decode_seconds          = 0.0;
+};
+
+UsageRate usage_rate_window(const UsageState& state) {
+    UsageRate rate;
+    for (const UsageRecent& r : state.recent) {
+        rate.computed_prefill_tokens += r.computed_prefill_tokens;
+        rate.completion_tokens       += r.completion_tokens;
+        rate.decode_seconds          += r.decode_seconds;
+    }
+    return rate;
+}
+
+std::wstring usage_fmt_decode_rate(const UsageRate& rate) {
+    if (rate.decode_seconds <= 0.0) { return L"—"; }
+    const long long tok_s = std::llround(
+        static_cast<double>(rate.completion_tokens) / rate.decode_seconds);
+    return std::to_wstring(tok_s);
+}
+
+// Full number with space thousands separators (no K/M shortening): 12480 ->
+// "12 480" (user spec 2026-09-05: "inte avkortat som k utan tusental").
+std::wstring usage_fmt_thousands(std::uint64_t v) {
+    const std::wstring digits = std::to_wstring(v);
+    std::wstring out;
+    out.reserve(digits.size() + digits.size() / 3);
+    for (std::size_t i = 0; i < digits.size(); ++i) {
+        if (i > 0 && (digits.size() - i) % 3 == 0) { out += L' '; }
+        out += digits[i];
+    }
+    return out;
+}
+
+UsageTotals usage_sum_days(const std::vector<std::string>& keys, const UsageState& state) {
+    UsageTotals sum;
+    for (const std::string& key : keys) {
+        const auto it = state.by_day.find(key);
+        if (it == state.by_day.end()) { continue; }
+        sum.completion_tokens += it->second.completion_tokens;
+        sum.requests          += it->second.requests;
+    }
+    return sum;
+}
+
+void usage_scan(HWND hwnd) {
+    static bool state_loaded = false;
+    if (!state_loaded) { usage_state_load(); state_loaded = true; }
+    const std::wstring base = module_dir() + L"ninfer-serve-request.jsonl";
+    // Oldest first: the rotated files (.2 oldest, .1 newest) are static — the
+    // serve only appends to the base — so folding them first keeps the recent
+    // ring (rate window) in ledger order.
+    const std::array<std::wstring, 3> paths = {base + L".2", base + L".1", base};
+    // Position tag per ledger file (oldest -> newest). Offsets are keyed by
+    // these tags, not by file content, so identical heads never collapse two
+    // files into one offset.
+    const std::array<std::string, 3> tags = {"two", "one", "base"};
+    const std::uint64_t now_epoch = static_cast<std::uint64_t>(std::time(nullptr));
+
+    // Detect a rotation BEFORE reading: the serve appends only to the base, so
+    // the base only ever grows -- if it is now smaller than the offset consumed
+    // last scan, it rolled over and a fresh (smaller) base replaced it. On that
+    // event shift the offsets down the pipeline (two<-one, one<-base, base<-0)
+    // so each file's consumed bytes follow the content that moved. A base that
+    // is absent this scan keeps its offset (a rotation may reappear next scan);
+    // a base that reappears small then still trips this test.
+    const bool base_present =
+        ::GetFileAttributesW(base.c_str()) != INVALID_FILE_ATTRIBUTES;
+    std::uint64_t base_size = 0;
+    if (base_present) {
+        HANDLE probe = ::CreateFileW(base.c_str(), GENERIC_READ,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (probe != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER size_bytes {};
+            if (::GetFileSizeEx(probe, &size_bytes)) {
+                base_size = static_cast<std::uint64_t>(size_bytes.QuadPart);
+            }
+            ::CloseHandle(probe);
+        }
+    }
+    const auto base_it = g_usage.file_offsets.find("base");
+    const std::uint64_t base_offset_prev =
+        base_it != g_usage.file_offsets.end() ? base_it->second.offset : 0;
+    const bool rotated = base_present && base_size < base_offset_prev;
+    if (rotated) {
+        const auto one_it = g_usage.file_offsets.find("one");
+        const std::uint64_t one_offset_prev =
+            one_it != g_usage.file_offsets.end() ? one_it->second.offset : 0;
+        g_usage.file_offsets["two"].offset = one_offset_prev;
+        g_usage.file_offsets["one"].offset = base_offset_prev;
+        g_usage.file_offsets["base"].offset = 0;
+    }
+
+    bool any_file_present = false;
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const std::wstring& path = paths[i];
+        if (::GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            continue;  // rotated out and deleted (or never created)
+        }
+        any_file_present = true;
+        HANDLE file = ::CreateFileW(path.c_str(), GENERIC_READ,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            continue;  // present but unreadable this tick: retry next scan; the
+                       // saved offset (last_seen untouched) is kept
+        }
+        LARGE_INTEGER size_bytes {};
+        if (!::GetFileSizeEx(file, &size_bytes)) { ::CloseHandle(file); continue; }
+        const std::uint64_t size = static_cast<std::uint64_t>(size_bytes.QuadPart);
+        // Resume from this file's consumed offset; it always sits on a '\n'
+        // boundary, so a trailing partial line (only the base can leave one) is
+        // re-read on the next scan.
+        std::uint64_t offset = 0;
+        if (const auto it = g_usage.file_offsets.find(tags[i]);
+            it != g_usage.file_offsets.end()) {
+            offset = it->second.offset;
+            if (offset > size) { offset = size; }  // shrank: never re-fold
+        }
+        if (size > offset) {
+            // Seek to the consumed offset before reading: CreateFileW opens at
+            // byte 0 and ReadFile uses the file pointer — without the seek every
+            // tick would re-read the file HEAD instead of the appended tail.
+            LARGE_INTEGER seek {};
+            seek.QuadPart = static_cast<LONGLONG>(offset);
+            LARGE_INTEGER seek_result {};
+            if (::SetFilePointerEx(file, seek, &seek_result, FILE_BEGIN) &&
+                seek_result.QuadPart == seek.QuadPart) {
+                const std::size_t want = static_cast<std::size_t>(size - offset);
+                std::string chunk(want, '\0');
+                std::size_t got = 0;
+                while (got < want) {
+                    DWORD n = 0;
+                    if (!::ReadFile(file, chunk.data() + got,
+                                     static_cast<DWORD>(want - got), &n, nullptr) ||
+                        n == 0) {
+                        break;
+                    }
+                    got += n;
+                }
+                chunk.resize(got);
+                // Fold complete lines only; the offset stops at the last '\n'.
+                std::size_t line_pos = 0;
+                while (line_pos < chunk.size()) {
+                    const std::size_t nl = chunk.find('\n', line_pos);
+                    if (nl == std::string::npos) { break; }
+                    const std::string line = chunk.substr(line_pos, nl - line_pos);
+                    line_pos = nl + 1;
+                    nlohmann::json record;
+                    try {
+                        record = nlohmann::json::parse(line);
+                    } catch (const nlohmann::json::exception&) {
+                        continue;  // torn line at a crash boundary: skip
+                    }
+                    if (record.value("event", std::string()) != "request_done" ||
+                        !record.contains("result") ||
+                        !record.contains("timings_seconds")) {
+                        continue;
+                    }
+                    const nlohmann::json& result  = record["result"];
+                    const nlohmann::json& timings = record["timings_seconds"];
+                    const std::uint64_t computed =
+                        result.value("computed_prefill_tokens", 0ULL);
+                    const std::uint64_t out = result.value("completion_tokens", 0ULL);
+                    const double decode_s = timings.value("decode", 0.0);
+                    const std::uint64_t ts_ms = record.value("timestamp_unix_ms", 0ULL);
+                    const std::time_t ts = static_cast<std::time_t>(ts_ms / 1000);
+                    UsageDay& day = g_usage.by_day[usage_day_key_local(ts)];
+                    day.completion_tokens += out;
+                    day.requests += 1;
+                    if (ts > 0) {
+                        g_usage.recent.push_back({ts, computed, out, decode_s});
+                    }
+                }
+                offset += line_pos;
+            }
+        }
+        g_usage.file_offsets[tags[i]] = {offset, now_epoch};
+        ::CloseHandle(file);
+    }
+    if (!any_file_present && g_usage.by_day.empty()) {
+        ::SetWindowTextW(GetDlgItem(hwnd, IDC_USAGE_TEXT),
+                         L"Usage: no request log (serve --request-log-jsonl off)");
+        return;
+    }
+
+    // Age out entries outside the rolling 10-minute window. Order-independent:
+    // the ring mirrors ledger order, which is chronological in live use but NOT
+    // guaranteed on a full rescan (probe ledgers write newer lines first) —
+    // popping the front only would strand stale entries behind a young one.
+    const std::time_t now = std::time(nullptr);
+    auto rit = g_usage.recent.begin();
+    while (rit != g_usage.recent.end()) {
+        if (now - rit->ts > kUsageRateWindowSec) {
+            rit = g_usage.recent.erase(rit);
+        } else {
+            ++rit;
+        }
+    }
+
+    const auto today =
+        usage_sum_days({usage_day_key_local(std::time(nullptr))}, g_usage);
+    const auto week  = usage_sum_days(usage_calendar_day_keys(true), g_usage);
+    const auto month = usage_sum_days(usage_calendar_day_keys(false), g_usage);
+    UsageTotals total;
+    for (const auto& entry : g_usage.by_day) {
+        total.completion_tokens += entry.second.completion_tokens;
+        total.requests          += entry.second.requests;
+    }
+    UsageRate rate = usage_rate_window(g_usage);
+    // Hold the displayed rate while the serve is idle: with no request_done in
+    // the last 10 s the rolling window would fade out, so the last-shown sums
+    // stand until new activity recomputes them (user spec 2026-09-05).
+    {
+        const std::time_t now = std::time(nullptr);
+        std::time_t newest = 0;
+        for (const UsageRecent& r : g_usage.recent) {
+            if (r.ts > newest) { newest = r.ts; }
+        }
+        const bool active = newest > 0 && now - newest <= kUsageActivityHoldSec;
+        if (!active && g_usage.shown_rate_valid) {
+            rate.computed_prefill_tokens = g_usage.shown_prompt_tokens;
+            rate.completion_tokens       = g_usage.shown_completion_tokens;
+            rate.decode_seconds          = g_usage.shown_decode_seconds;
+        }
+        g_usage.shown_prompt_tokens     = rate.computed_prefill_tokens;
+        g_usage.shown_completion_tokens = rate.completion_tokens;
+        g_usage.shown_decode_seconds    = rate.decode_seconds;
+        g_usage.shown_rate_valid        = true;
+    }
+    const std::uint64_t prompt_rate = static_cast<std::uint64_t>(std::llround(
+        static_cast<double>(rate.computed_prefill_tokens) /
+        static_cast<double>(kUsageRateWindowSec)));
+    const std::wstring text =
+        L"Usage:  today " +
+        usage_fmt_tokens(today.completion_tokens) +
+        L" tok   week " +
+        usage_fmt_tokens(week.completion_tokens) + L"   month " +
+        usage_fmt_tokens(month.completion_tokens) + L"   total " +
+        usage_fmt_tokens(total.completion_tokens) + L"\r\nRate:   prompt " +
+        usage_fmt_thousands(prompt_rate) + L" tok/s   ·   decode " +
+        usage_fmt_decode_rate(rate) + L" tok/s   ·   last 10 min   ·   " +
+        std::to_wstring(today.requests) + L" requests today";
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_USAGE_TEXT), text.c_str());
+    // Persist the buckets + per-file offsets (best-effort; a failed write
+    // never blocks the UI). Every 3 s tick: the persisted state is at most
+    // one tick behind, so a crash/restart never re-folds or loses data.
+    usage_state_save();
+}
+
 void create_main_controls(HWND hwnd) {
     const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
     auto label = [&](int id, std::wstring_view text, int x, int y) {
@@ -1251,9 +1838,9 @@ void create_main_controls(HWND hwnd) {
         ::SendMessageW(b, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         return b;
     };
-    auto check = [&](int id, std::wstring_view text, int x, int y, bool checked) {
+    auto check = [&](int id, std::wstring_view text, int x, int y, bool checked, int w = 130) {
         HWND c = ::CreateWindowExW(0, L"BUTTON", text.data(), WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                   x, y, 130, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   x, y, w, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                    GetModuleHandleW(nullptr), nullptr);
         ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
@@ -1288,6 +1875,10 @@ void create_main_controls(HWND hwnd) {
     label(0, L"KV dtype:", 324, 36);
     combo(IDC_KV_DTYPE_COMBO, 396, 34, 70, {L"(default)", L"bf16", L"int8", L"fp8"});
     button(IDC_AUTO_BUTTON, L"AutoContext", 480, 34, 90);
+    // Default thinking budget (Row 2 free space): token cap for thinking-enabled
+    // requests; empty field = no default (the serve leaves thinking uncapped).
+    label(0, L"Think budget:", 590, 36);
+    edit(IDC_THINKING_BUDGET_EDIT, 690, 34, 60, 22);
 
     // Row 3: sampling (the 5 Qwen params grouped, then the greedy toggle)
     label(0, L"Temperature:", 8, 64);
@@ -1307,7 +1898,7 @@ void create_main_controls(HWND hwnd) {
     label(0, L"Vision:", 150, 94);
     combo(IDC_VISION_COMBO, 200, 92, 64, {L"Off", L"GPU", L"CPU"});
     label(0, L"Spec:", 290, 94);
-    combo(IDC_SPEC_COMBO, 330, 92, 90, {L"(none)", L"mtp", L"dflash"});
+    combo(IDC_SPEC_COMBO, 330, 92, 90, {L"(none)", L"mtp", L"dflash", L"dflash2", L"dflash2+ngram"});
     label(0, L"Draft tokens:", 430, 94);
     edit(IDC_DRAFT_TOKENS_EDIT, 528, 92, 50, 22);
     check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 600, 92, true);
@@ -1333,6 +1924,9 @@ void create_main_controls(HWND hwnd) {
     // of these per run.
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"32768");
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_NEW_EDIT), L"8192");
+    // Default thinking budget (2026-09-05 request): 4096 tokens; the field stays
+    // user-editable and an empty field omits --default-thinking-budget entirely.
+    ::SetWindowTextW(GetDlgItem(hwnd, IDC_THINKING_BUDGET_EDIT), L"4096");
     ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
     // Thinking is checked by default (Row 4); seed the sampling fields with the
     // thinking preset. The checkbox handler re-applies the matching preset on toggle.
@@ -1349,6 +1943,70 @@ void create_main_controls(HWND hwnd) {
                                     8, 150, 884, 18, hwnd, reinterpret_cast<HMENU>(IDC_STATUS_TEXT),
                                     GetModuleHandleW(nullptr), nullptr);
     ::SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+
+    // Usage block (D11): read-only, refreshed by the WM_TIMER usage scan. A
+    // larger face than the default GUI font — the two-line stats are meant to be
+    // read at a glance.
+    g_usage_font = ::CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    HWND usage = ::CreateWindowExW(0, L"STATIC", L"Usage: scanning…",
+                                   WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX | WS_BORDER,
+                                   8, 174, 884, 44, hwnd, reinterpret_cast<HMENU>(IDC_USAGE_TEXT),
+                                   GetModuleHandleW(nullptr), nullptr);
+    ::SendMessageW(usage, WM_SETFONT, reinterpret_cast<WPARAM>(g_usage_font), TRUE);
+
+    // Tooltips: one tooltip control for all the parameter controls; concise one-line
+    // explanations (user request 2026-09-09). The texts are string literals (process
+    // lifetime), so the lpszText pointers the control reads stay valid.
+    HWND tip = ::CreateWindowExW(0, TOOLTIPS_CLASSW, nullptr, TTS_ALWAYSTIP, 0, 0, 0, 0, hwnd,
+                                 nullptr, GetModuleHandleW(nullptr), nullptr);
+    ::SendMessageW(tip, TTM_SETMAXTIPWIDTH, 380, 0);
+    const struct {
+        int id;
+        std::wstring_view text;
+    } tips[] = {
+        {IDC_MODEL_EDIT, L"Path to the .ninfer model file the serve loads."},
+        {IDC_MODEL_BROWSE, L"Open a file dialog to choose the model file."},
+        {IDC_MAX_CONTEXT_EDIT,
+         L"Total context window in tokens (prompt + output). Bigger = more history, more VRAM."},
+        {IDC_MAX_NEW_EDIT, L"Maximum new tokens to generate in one response."},
+        {IDC_KV_DTYPE_COMBO,
+         L"KV cache precision. fp8 fits the most context per byte of VRAM; bf16 is the most "
+         L"accurate."},
+        {IDC_AUTO_BUTTON, L"Probe VRAM and fill Max context with the largest size that fits."},
+        {IDC_THINKING_BUDGET_EDIT, L"Cap on thinking tokens per request. Empty = no cap."},
+        {IDC_TEMPERATURE_EDIT, L"Sampling temperature: lower = more deterministic, higher = more varied."},
+        {IDC_TOP_P_EDIT, L"Nucleus sampling: draw only from the top p of the probability mass (0-1)."},
+        {IDC_TOP_K_EDIT, L"Consider only the top k most likely tokens when sampling. 0 = off."},
+        {IDC_MIN_P_EDIT, L"Keep tokens whose probability is at least min-p times the top token. 0 = off."},
+        {IDC_PRESENCE_PENALTY_EDIT, L"Presence penalty: nudge away from tokens already used (-2 to 2)."},
+        {IDC_GREEDY_CHECK, L"Force temperature 0 (exact argmax). Overrides all sampling settings."},
+        {IDC_THINKING_CHECK, L"Enable reasoning/thinking mode. Also sets the temperature/top-p preset."},
+        {IDC_VISION_COMBO, L"Vision input: Off, GPU (CUDA encode), or CPU (host-RAM weights, no VRAM)."},
+        {IDC_SPEC_COMBO, L"Speculative decoding backend for faster generation. (none) = off; mtp / dflash / dflash2 (dflash2 needs the dflash2 artifact; defaults to it when the model supports it); dflash2+ngram = dflash2 with n-gram self-speculation on."},
+        {IDC_DRAFT_TOKENS_EDIT, L"Draft tokens to propose per step (needs a Spec backend)."},
+        {IDC_LM_HEAD_DRAFT_CHECK, L"Use the optimized draft head for speculative proposals (faster drafts)."},
+        {IDC_SEED_EDIT, L"Fixed sampling seed (reproducible output). Empty = a new random seed per request."},
+        {IDC_SYSTEM_PROMPT_BUTTON, L"Edit the default system prompt used when the client sends none."},
+        {IDC_TEMPLATE_BUTTON, L"View and manage the chat template baked into the artifact."},
+        {IDC_HOST_EDIT, L"Local address the serve listens on."},
+        {IDC_PORT_EDIT, L"TCP port the serve listens on."},
+        {IDC_SERVE_BUTTON, L"Start the inference server with these settings."},
+        {IDC_STOP_BUTTON, L"Stop the running server (the GUI stays open)."},
+        {IDC_EXIT_BUTTON, L"Close the GUI and stop all running ninfer servers."},
+    };
+    for (const auto& t : tips) {
+        HWND c = ::GetDlgItem(hwnd, t.id);
+        if (c == nullptr) { continue; }
+        TOOLINFOW ti {};
+        ti.cbSize   = sizeof(TOOLINFOW);
+        ti.hwnd     = hwnd;
+        ti.uFlags   = TTF_IDISHWND;
+        ti.uId      = reinterpret_cast<UINT_PTR>(c);
+        ti.lpszText = const_cast<LPWSTR>(t.text.data());
+        ::SendMessageW(tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,10 +2027,20 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Restore the last used settings (file), before the command-line
                 // prefill (CLI) applied in WinMain — CLI beats file beats defaults.
                 apply_saved_settings(hwnd);
+                // Usage block (D11): 3 s refresh of the serve's request ledger.
+                ::SetTimer(hwnd, 1, 3000, nullptr);
             } else if (info->kind == 1) {
                 create_sp_controls(hwnd);
             } else {
                 create_ct_controls(hwnd, info);
+            }
+            return 0;
+        }
+
+        case WM_TIMER: {
+            // Usage block refresh (D11); the timer exists only on the main window.
+            if (::GetWindowLongPtrW(hwnd, GWLP_USERDATA) == 0) {
+                usage_scan(hwnd);
             }
             return 0;
         }
@@ -1406,7 +2074,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     hwnd, L"Select model artifact",
                     std::wstring(L"NInfer artifacts (*.ninfer)\0*.ninfer\0All files (*)\0*.*\0"),
                     initial_dir);
-                if (!picked.empty()) { ::SetWindowTextW(GetDlgItem(hwnd, IDC_MODEL_EDIT), picked.c_str()); }
+                if (!picked.empty()) {
+                    ::SetWindowTextW(GetDlgItem(hwnd, IDC_MODEL_EDIT), picked.c_str());
+                    apply_model_sizing_defaults(hwnd, picked);
+                }
                 return 0;
             }
             if (id == IDC_AUTO_BUTTON) {
@@ -1559,9 +2230,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DestroyWindow(hwnd);
                 return 0;
             }
-            // Main window: kill every ninfer engine in any session before this GUI exits,
-            // so closing one window never leaves orphaned GPU work behind. This also
-            // terminates this GUI's own child; the cleanup below still joins its watcher.
+            // Main window: persist the current form state (best-effort; a write
+            // failure never blocks exit) so settings survive across sessions even
+            // if the user never clicks Serve. Then kill every ninfer engine in any
+            // session before this GUI exits, so closing one window never leaves
+            // orphaned GPU work behind. This also terminates this GUI's own child;
+            // the cleanup below still joins its watcher.
+            save_current_settings(hwnd);
             kill_all_ninfer_engines();
             if (g_child.running.load()) {
                 if (g_child.process != nullptr) { ::TerminateProcess(g_child.process, 1); }
@@ -1574,7 +2249,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_DESTROY: {
             const LONG_PTR user = ::GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             delete reinterpret_cast<EditorInfo*>(user);
-            if (user == 0) { ::PostQuitMessage(0); }  // main window only
+            if (user == 0) {
+                ::KillTimer(hwnd, 1);  // usage refresh (D11)
+                if (g_usage_font != nullptr) {
+                    ::DeleteObject(g_usage_font);
+                    g_usage_font = nullptr;
+                }
+                ::PostQuitMessage(0);   // main window only
+            }
             return 0;
         }
     }
@@ -1602,11 +2284,11 @@ int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE, LPSTR, int show_cmd) {
     wc.hIcon         = ::LoadIconW(nullptr, MAKEINTRESOURCEW(IDI_APPLICATION));
     ::RegisterClassExW(&wc);
 
-    // 920x240: the one-shot Answer/Log panes are gone, so the window is just the
-    // parameter rows + status bar.
-    HWND hwnd = ::CreateWindowExW(0, wc.lpszClassName, L"NInfer",
+    // 920x284: the one-shot Answer/Log panes are gone, so the window is just the
+    // parameter rows + status bar + the read-only usage block (D11).
+    HWND hwnd = ::CreateWindowExW(0, wc.lpszClassName, kAppIdentity,
                                   WS_OVERLAPPEDWINDOW | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
-                                  920, 240, nullptr, nullptr, h_instance, nullptr);
+                                  920, 284, nullptr, nullptr, h_instance, nullptr);
     if (hwnd == nullptr) { return 1; }
 
     // Prefill the form from the command line, if any arguments were given.
@@ -1621,7 +2303,7 @@ int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE, LPSTR, int show_cmd) {
     if (find_sibling_cli().empty()) {
         ::MessageBoxW(hwnd, L"ninfer-cli.exe was not found next to Ninfer.exe.\n\n"
                             L"Place ninfer-cli.exe in the same folder and restart.",
-                      L"NInfer", MB_ICONWARNING);
+                      kAppIdentity, MB_ICONWARNING);
     }
 
     ::ShowWindow(hwnd, show_cmd);

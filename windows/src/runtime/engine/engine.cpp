@@ -100,15 +100,19 @@ std::string context_capacity_error(std::size_t prompt_tokens, std::uint32_t max_
 
 class PreparedPrompt::Impl {
 public:
+    // The prepared prompt is family-specific: qwen3_6 (27B / 35B-A3B). The template deduces
+    // the family and emplaces the matching variant alternative (index 0 = qwen3_6_27b,
+    // index 1 = qwen3_6_35ba3b).
+    template <class FamilyPrepared>
     Impl(PromptSummary prompt_summary, PromptPreparationStats preparation, SamplingMode mode,
-         targets::qwen3_6::PreparedPrompt prepared)
+         FamilyPrepared prepared)
         : summary(std::move(prompt_summary)), prepare(std::move(preparation)), sampling_mode(mode),
-          value(std::move(prepared)) {}
+          value(std::in_place_type<std::remove_cvref_t<FamilyPrepared>>, std::move(prepared)) {}
 
     PromptSummary summary;
     PromptPreparationStats prepare;
     SamplingMode sampling_mode = SamplingMode::Thinking;
-    targets::qwen3_6::PreparedPrompt value;
+    std::variant<targets::qwen3_6::PreparedPrompt> value;
 };
 
 PreparedPrompt::PreparedPrompt() noexcept                            = default;
@@ -211,9 +215,11 @@ public:
                 if constexpr (std::is_same_v<Instance, targets::Qwen3_6_27BInstance>) {
                     return std::make_unique<Core27>(*target_ptr, device, options,
                                                                  std::move(constructed.context_cost));
-                } else {
+                } else if constexpr (std::is_same_v<Instance, targets::Qwen3_6_35BA3BInstance>) {
                     return std::make_unique<Core35>(*target_ptr, device, options,
                                                                  std::move(constructed.context_cost));
+                } else {
+                    return std::monostate{};
                 }
             },
             active);
@@ -357,9 +363,10 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
             if constexpr (std::is_same_v<CoreState, std::monostate>) {
                 throw std::logic_error("Engine core is unavailable");
             } else {
-                auto submission =
-                    core->submit(std::move(prompt.impl_->value), prompt_summary, prepare_seconds,
-                                 std::move(resolved_options), consumer_mode, pending_deadline);
+                auto submission = core->submit(std::move(std::get<0>(prompt.impl_->value)),
+                                               prompt_summary, prepare_seconds,
+                                               std::move(resolved_options), consumer_mode,
+                                               pending_deadline);
                 return GenerationHandle(std::make_unique<GenerationHandle::Impl>(
                     impl_, std::move(submission), resolved_sampling));
             }

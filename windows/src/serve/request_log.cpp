@@ -51,6 +51,17 @@ std::string new_server_instance_id() {
     return "serve-" + std::to_string(process_id()) + '-' + std::to_string(micros);
 }
 
+// Unique id for one freshly-created base file. The per-process sequence differs across the
+// base and every rotated file it replaces, and the process id + creation time differ across
+// restarts, so the marker line written as the first line of each fresh base lands a distinct
+// value in the file's first bytes (the GUI's 256-byte fingerprint).
+std::string new_file_epoch_id(std::uint32_t sequence) {
+    const auto now    = std::chrono::system_clock::now().time_since_epoch();
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+    return "fep-" + std::to_string(process_id()) + '-' + std::to_string(micros) +
+           '-' + std::to_string(sequence);
+}
+
 std::filesystem::path normalized_absolute_path(const std::string& value) {
     std::error_code error;
     std::filesystem::path path = std::filesystem::weakly_canonical(value, error);
@@ -153,6 +164,17 @@ Json event_base(const std::string& server_instance_id, std::uint64_t timestamp, 
                 {"server_instance_id", server_instance_id}};
 }
 
+// Marker written as the FIRST line of every freshly-created base file. `file_epoch` sorts
+// early (nlohmann dumps keys alphabetically) so the unique value lands well inside the first
+// 256 bytes that the GUI fingerprints. Readers that filter on `event` ignore it; it carries no
+// `result`/`timings_seconds`, so the usage fold skips it.
+std::string format_log_file_opened_json(const std::string& server_instance_id,
+                                        std::uint64_t timestamp, const std::string& file_epoch) {
+    Json record = event_base(server_instance_id, timestamp, "log_file_opened");
+    record["file_epoch"] = file_epoch;
+    return record.dump();
+}
+
 Json sampler_json(const ninfer::ResolvedSamplingParameters& sampling) {
     return Json{{"temperature", sampling.temperature},
                 {"top_p", sampling.top_p},
@@ -193,6 +215,8 @@ Json overrides_json(const ninfer::SamplingOverrides& overrides) {
 Json request_json(const RequestLogContext& context) {
     Json thinking_budget = nullptr;
     if (context.thinking_budget) { thinking_budget = *context.thinking_budget; }
+    Json reasoning_effort = nullptr;
+    if (context.reasoning_effort) { reasoning_effort = *context.reasoning_effort; }
     return Json{{"request_id", context.id},
                 {"protocol", context.protocol},
                 {"model", context.model},
@@ -209,6 +233,7 @@ Json request_json(const RequestLogContext& context) {
                 {"thinking_budget", std::move(thinking_budget)},
                 {"preserve_thinking", context.preserve_thinking},
                 {"preserve_thinking_semantic_change", context.preserve_thinking_semantic_change},
+                {"reasoning_effort", std::move(reasoning_effort)},
                 {"sampling", sampler_json(context.sampling)}};
 }
 
@@ -422,6 +447,10 @@ RequestLogContext make_request_log_context(std::uint64_t id, std::string protoco
     context.thinking_budget                    = prepared.thinking_budget;
     context.preserve_thinking                  = prepared.preserve_thinking;
     context.preserve_thinking_semantic_change  = prepared.preserve_thinking_semantic_change;
+    if (request.reasoning_effort) {
+        context.reasoning_effort =
+            std::string(requested_reasoning_effort_name(*request.reasoning_effort));
+    }
     context.sampling                           = prepared.sampling;
     context.acquisition_seconds                = prepared.acquisition_seconds;
     context.preparation                        = prepared.preparation;
@@ -921,9 +950,27 @@ JsonlRequestLog::JsonlRequestLog(const std::string& path,
         throw std::invalid_argument("request JSONL log must not overwrite the model artifact");
     }
     server_instance_id_ = new_server_instance_id();
+    // A brand-new base (absent or empty) gets a unique file_epoch marker as its first line so
+    // the GUI's 256-byte head fingerprint is distinct per file. A continued base (serve restart
+    // appending to existing content) keeps its original head, so the marker is skipped there.
+    std::error_code probe;
+    const std::uintmax_t pre_size = std::filesystem::file_size(path_, probe);
+    const bool fresh_base = probe || pre_size == 0;
     output_.open(path_, std::ios::out | std::ios::app);
     if (!output_) {
         throw std::runtime_error("failed to open request JSONL log for append: " + path_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (fresh_base) {
+            output_ << format_log_file_opened_json(server_instance_id_, unix_time_ms(),
+                                                   new_file_epoch_id(file_epoch_seq_++))
+                    << '\n';
+            output_.flush();
+        }
+        // Drop rotated files that outlived the retention window before this process appended
+        // anything (rotation re-prunes as it runs).
+        prune_rotated();
     }
 }
 
@@ -973,11 +1020,67 @@ void JsonlRequestLog::write_throughput(const ThroughputReport& report) {
 void JsonlRequestLog::append(std::string record) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (failed_) { return; }
+    rotate_if_needed();
     output_ << record << '\n';
     output_.flush();
     if (!output_) {
         failed_ = true;
         write_console_log(ConsoleLogLevel::Error, "request JSONL logging failed for " + path_);
+    }
+}
+
+void JsonlRequestLog::rotate_if_needed() {
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path_, error);
+    if (error || size < static_cast<std::uintmax_t>(kRequestLogRotateBytes)) { return; }
+    const std::filesystem::path base(path_);
+    const std::filesystem::path rotated_1(path_ + ".1");
+    const std::filesystem::path rotated_2(path_ + ".2");
+    // Close before renaming: on Windows a rename fails with a sharing violation while the
+    // stream's handle is open. If a step fails, the base file still exists and logging
+    // continues on it (the rotation is retried on the next append).
+    output_.close();
+    auto restore_base = [this, &base]() {
+        output_.open(base, std::ios::out | std::ios::app);
+        if (!output_) {
+            failed_ = true;
+            write_console_log(ConsoleLogLevel::Error, "request JSONL rotation failed for " + path_);
+        }
+    };
+    std::filesystem::remove(rotated_2, error); // drop the oldest rotated file; absent is fine
+    if (error) { restore_base(); return; }
+    if (std::filesystem::exists(rotated_1, error) && !error) {
+        std::filesystem::rename(rotated_1, rotated_2, error);
+        if (error) { restore_base(); return; }
+    }
+    std::filesystem::rename(base, rotated_1, error);
+    if (error) { restore_base(); return; }
+    output_.open(base, std::ios::out | std::ios::app);
+    if (!output_) {
+        failed_ = true;
+        write_console_log(ConsoleLogLevel::Error, "request JSONL rotation failed for " + path_);
+        return;
+    }
+    // The freshly-created base carries its own unique file_epoch marker as the first line (the
+    // rotated-in old base keeps the marker it got when it was the active base), so each of
+    // base/.1/.2 keeps a distinct GUI head fingerprint across rotations.
+    output_ << format_log_file_opened_json(server_instance_id_, unix_time_ms(),
+                                           new_file_epoch_id(file_epoch_seq_++))
+            << '\n';
+    output_.flush();
+    prune_rotated();
+}
+
+void JsonlRequestLog::prune_rotated() {
+    const auto cutoff = std::filesystem::file_time_type::clock::now() -
+                        std::chrono::days{kRequestLogRetentionDays};
+    const std::filesystem::path candidates[2] = {std::filesystem::path(path_ + ".1"),
+                                                 std::filesystem::path(path_ + ".2")};
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        const auto written = std::filesystem::last_write_time(candidate, error);
+        if (error) { continue; } // absent or unreadable
+        if (written < cutoff) { std::filesystem::remove(candidate, error); }
     }
 }
 

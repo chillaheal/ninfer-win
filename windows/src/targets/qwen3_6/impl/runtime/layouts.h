@@ -22,12 +22,14 @@ namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS {
 using TensorLayout = TensorRegion;
 
 struct DFlashPersistentLayout {
-    qwen3_6::PagedKVCacheLayout full;
+    std::optional<qwen3_6::PagedKVCacheLayout> full;
     TensorLayout prefill_features;
     TensorLayout prefill_positions;
     TensorLayout pending_features;
 
-    [[nodiscard]] std::size_t kv_payload_bytes() const noexcept { return full.payload_bytes(); }
+    [[nodiscard]] std::size_t kv_payload_bytes() const noexcept {
+        return full ? full->payload_bytes() : 0;
+    }
 };
 
 struct PersistentLayout {
@@ -78,6 +80,7 @@ struct SequencePlanningInputs {
     bool use_cuda_graph = true;
     int device          = 0;
     ContextCacheOptions context_cache;
+    bool ngram          = false;
 };
 
 } // namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS
@@ -105,6 +108,7 @@ struct SequencePlanImpl<NINFER_QWEN36_VARIANT> {
     NINFER_QWEN36_RUNTIME_NS::WorkspacePlan workspace;
     std::size_t graph_allowance_bytes    = 0;
     std::size_t device_reservation_bytes = 0;
+    bool ngram                           = false;
 };
 
 template <>

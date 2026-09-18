@@ -12,6 +12,10 @@
 #include <string>
 #include <string_view>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace ninfer::serve {
 namespace {
 
@@ -85,9 +89,10 @@ std::string serve_usage_text(const char* argv0) {
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
            "[--max-private-continuations N] [--max-shared-prefixes N] "
            "[--max-long-anchors-per-continuation N] [--max-cache-markers-per-request N] "
-           "[--request-log-jsonl FILE] [--system-prompt-file FILE] "
+           "[--request-log-jsonl FILE|off] [--system-prompt-file FILE] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
-           "[--kv-dtype bf16|int8|fp8] [--spec mtp|dflash --draft-tokens N] "
+           "[--kv-dtype bf16|int8|fp8] "
+           "[--spec mtp|dflash --draft-tokens N] [--ngram] "
            "[--default-max-tokens N] [--default-thinking-budget N] "
            "[--vision [gpu|cpu|off]] [--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
@@ -101,7 +106,9 @@ std::string serve_usage_text(const char* argv0) {
            "       --media-cache-mib defaults to 1024; 0 disables retained media reuse\n"
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
-           "       --request-log-jsonl appends full-precision server/request records\n"
+           "       --request-log-jsonl appends full-precision server/request records; "
+           "defaults to ninfer-serve-request.jsonl next to the serve binary; "
+           "\"off\" disables the log\n"
            "       --system-prompt-file sets a default leading system instruction for "
            "clients that send no non-empty system prompt; the client's own always wins; "
            "absent or empty file => no default\n"
@@ -127,6 +134,20 @@ std::string serve_usage_text(const char* argv0) {
            "       --greedy forces temperature 0 (exact argmax).\n";
 }
 
+// D11: structured request logging is on by default. The ledger lives at a fixed
+// path next to the running serve binary so the GUI's usage block can read it
+// without IPC. On non-Windows upstream the flag stays opt-in (empty = disabled).
+std::string default_request_log_path() {
+#ifdef _WIN32
+    wchar_t module_path[MAX_PATH] {};
+    if (::GetModuleFileNameW(nullptr, module_path, MAX_PATH) == 0) { return {}; }
+    const std::filesystem::path directory = std::filesystem::path(module_path).parent_path();
+    return (directory / "ninfer-serve-request.jsonl").string();
+#else
+    return {};
+#endif
+}
+
 ServeOptions parse_serve_options(int argc, char** argv) {
     ServeOptions options;
     options.startup_argv.reserve(static_cast<std::size_t>(argc));
@@ -143,6 +164,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     bool default_max_tokens_explicit = false;
     bool kv_capacity_explicit        = false;
     bool context_capacity_explicit   = false;
+    bool request_log_explicit        = false;
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
         options.help_requested = true;
         return options;
@@ -256,10 +278,14 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                                       "max-cache-markers-per-request"));
             context_capacity_explicit = true;
         } else if (arg == "--request-log-jsonl") {
-            options.request_log_jsonl = require_value("--request-log-jsonl");
-            if (options.request_log_jsonl.empty()) {
+            const std::string value = require_value("--request-log-jsonl");
+            if (value.empty()) {
                 throw std::invalid_argument("--request-log-jsonl must not be empty");
             }
+            // "off" disables structured request logging; anything else is a path.
+            // The default ledger (below) applies only when the flag is absent.
+            request_log_explicit = true;
+            if (value != "off") { options.request_log_jsonl = value; }
         } else if (arg == "--system-prompt-file") {
             options.system_prompt_file = require_value("--system-prompt-file");
             if (options.system_prompt_file.empty()) {
@@ -310,6 +336,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--draft-tokens") {
             options.speculative.draft_tokens = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--draft-tokens"), "draft-tokens"));
+        } else if (arg == "--ngram") {
+            options.speculative.ngram = true;
         } else if (arg == "--default-max-tokens") {
             options.default_max_tokens =
                 parse_nonnegative_int(require_value("--default-max-tokens"), "default-max-tokens");
@@ -367,6 +395,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else {
             throw std::invalid_argument("unknown argument: " + arg);
         }
+    }
+    // D11: apply the default request-log ledger unless the caller set the flag
+    // (an explicit "off" leaves the log disabled).
+    if (!request_log_explicit) {
+        options.request_log_jsonl = default_request_log_path();
     }
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);

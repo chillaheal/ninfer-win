@@ -143,6 +143,8 @@ Options parse_options(int argc, char** argv) {
             options.speculative.backend = product::parse_speculative_backend(value(arg));
         } else if (arg == "--draft-tokens") {
             options.speculative.draft_tokens = parse_u32(value(arg), "draft-tokens");
+        } else if (arg == "--ngram") {
+            options.speculative.ngram = true;
         } else if (arg == "--lm-head-draft") {
             options.speculative.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--raw-output") {

@@ -18,7 +18,7 @@ Tested Git revisions:
   `b3d4d0f50b868711c62432bbd68e746217a2f49a`;
 - Qwen3.6-27B groupwise-int MTP3: `5ea3242a206cdb0c4c1beaeb9d8a3048e6248423`;
 - Qwen3.6-35B-A3B MTP0 and Qwen3.6-27B groupwise-int MTP0:
-  `0795169393cab0f2c16246d4bac20dee735dc2a4`.
+  `0795169393cab0f2c16246d4bac20dee735dc2a4`;
 
 The Qwen3.6 measurements characterize its three registered artifact profiles independently on one
 NVIDIA GeForce RTX 5090. They cover long-context prefill and baseline decode with speculative

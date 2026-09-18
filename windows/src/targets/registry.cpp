@@ -13,10 +13,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include <windows.h>
 
 namespace ninfer::targets {
 namespace {
@@ -89,6 +92,15 @@ std::size_t current_free_device_bytes() {
     std::size_t total_bytes = 0;
     CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
     return free_bytes;
+}
+
+[[maybe_unused]] std::uint64_t current_system_ram_bytes() {
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx(&status)) {
+        throw std::runtime_error("GlobalMemoryStatusEx failed");
+    }
+    return static_cast<std::uint64_t>(status.ullTotalPhys);
 }
 
 template <class Target, class Loaded, class Instance>
@@ -256,7 +268,26 @@ KvProbeResult probe_registered(const EngineOptions& options, DeviceContext& devi
     return result;
 }
 
+
 } // namespace
+
+std::optional<std::string_view> resolve_target_key(
+    const artifact::ArtifactIdentity& identity) {
+    if (identity.model_id == Qwen3_6_27B::model_id) {
+        if (identity.weights_id == "groupwise-int" || identity.weights_id == "nvfp4") {
+            return Qwen3_6_27B::target_key;
+        }
+    } else if (identity.model_id == Qwen3_6_27B::qwen3_8_model_id) {
+        if (identity.weights_id == "groupwise-int" || identity.weights_id == "nvfp4") {
+            return Qwen3_6_27B::qwen3_8_target_key;
+        }
+    } else if (identity.model_id == Qwen3_6_35BA3B::model_id) {
+        if (identity.weights_id == "groupwise-int") {
+            return Qwen3_6_35BA3B::target_key;
+        }
+    }
+    return std::nullopt;
+}
 
 LoadedQwen3_6_27B::LoadedQwen3_6_27B(std::unique_ptr<Qwen3_6_27B::LoadedModel> stable_model,
                                      const EngineOptions& options)
@@ -289,6 +320,7 @@ Qwen3_6_35BA3BInstance::Qwen3_6_35BA3BInstance(std::unique_ptr<LoadedQwen3_6_35B
       program(Qwen3_6_35BA3B::create_program(*loaded->model, std::move(sequence_plan), device)) {}
 
 Qwen3_6_35BA3BInstance::~Qwen3_6_35BA3BInstance() = default;
+
 
 ConstructedTarget construct_target(const EngineOptions& options, DeviceContext& device) {
     validate_options(options);

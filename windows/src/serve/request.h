@@ -51,6 +51,9 @@ struct RequestLimits {
 struct CompletionUsage {
     int prompt_tokens     = 0;
     int completion_tokens = 0;
+    // Prompt tokens supplied from the engine's prefix cache (KV reuse), clamped
+    // to prompt_tokens. Wire: OpenAI `usage.prompt_tokens_details.cached_tokens`.
+    int cached_tokens     = 0;
 };
 
 enum class ContentKind {

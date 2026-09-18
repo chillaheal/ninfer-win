@@ -8,12 +8,18 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 
 namespace ninfer {
 
 struct DeviceContext;
+
+namespace artifact {
+struct ArtifactIdentity;
+}  // namespace artifact
 
 namespace targets {
 
@@ -78,8 +84,9 @@ struct Qwen3_6_35BA3BInstance {
     Qwen3_6_35BA3BInstance& operator=(const Qwen3_6_35BA3BInstance&) = delete;
 };
 
-using ActiveTarget =
-    std::variant<std::unique_ptr<Qwen3_6_27BInstance>, std::unique_ptr<Qwen3_6_35BA3BInstance>>;
+
+using ActiveTarget = std::variant<std::unique_ptr<Qwen3_6_27BInstance>,
+                                  std::unique_ptr<Qwen3_6_35BA3BInstance>>;
 
 struct ConstructedTarget {
     ActiveTarget active;
@@ -90,6 +97,12 @@ struct ConstructedTarget {
 
 [[nodiscard]] ConstructedTarget construct_target(const EngineOptions& options,
                                                  DeviceContext& device);
+
+// GPU-free identity -> target-key resolution: the registered artifact
+// identities (kept in sync with construct_target's dispatch). Returns the
+// registered target key or std::nullopt for an unregistered pair.
+[[nodiscard]] std::optional<std::string_view> resolve_target_key(
+    const artifact::ArtifactIdentity& identity);
 
 // KvProbeResult and probe_kv_capacity are declared in the public CUDA-free header
 // ninfer/probe.h (included above) so CLI/serve consumers can call the probe without pulling

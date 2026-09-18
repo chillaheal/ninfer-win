@@ -23,7 +23,7 @@
 # Non-default server port? Edit $Port below. (No named parameters on purpose:
 # PowerShell would prefix-match e.g. claude's -p onto a -Port param.)
 
-$Port = 8080
+$Port = 8888
 $base = "http://127.0.0.1:$Port"
 
 # Warn (and stop) if nothing is listening - claude would just fail to connect.

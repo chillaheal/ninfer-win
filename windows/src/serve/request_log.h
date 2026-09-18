@@ -17,8 +17,12 @@
 
 namespace ninfer::serve {
 
-inline constexpr int kRequestLogSchemaVersion        = 17;
+inline constexpr int kRequestLogSchemaVersion        = 19;
 inline constexpr const char* kRequestLogArtifactType = "ninfer_serve_request_log";
+// Rotation: the base ledger rolls over at 10 MiB into at most two shifted files (`.1` newest,
+// `.2` oldest), and rotated files older than 7 days are dropped at each rotation and at startup.
+inline constexpr std::size_t kRequestLogRotateBytes   = 10ULL * 1024 * 1024;
+inline constexpr int kRequestLogRetentionDays         = 7;
 
 struct RequestLogContext {
     std::uint64_t id = 0;
@@ -36,6 +40,10 @@ struct RequestLogContext {
     std::optional<std::uint32_t> thinking_budget;
     bool preserve_thinking                 = false;
     bool preserve_thinking_semantic_change = false;
+    // Client's requested reasoning effort (e.g. "medium" from output_config.effort); absent when
+    // the client sent none. Logged so the effective sampling (and any effort-coupled temperature)
+    // can be correlated with the effort that drove it.
+    std::optional<std::string> reasoning_effort;
     ninfer::ResolvedSamplingParameters sampling;
     double acquisition_seconds = 0.0;
     ninfer::PromptPreparationStats preparation;
@@ -151,9 +159,21 @@ public:
 
 private:
     void append(std::string record);
+    // Called with mutex_ held, before writing: rolls the base file over once it reaches
+    // kRequestLogRotateBytes (base -> .1 -> .2, dropping the old .2) and prunes stale rotated
+    // files; leaves output_ open on the fresh base file.
+    void rotate_if_needed();
+    // Called with mutex_ held: deletes `.1`/`.2` files whose last-write time is older than
+    // kRequestLogRetentionDays.
+    void prune_rotated();
 
     std::string path_;
     std::string server_instance_id_;
+    // Per-process sequence for the file_epoch marker: a fresh base (at startup or after a
+    // rotation) gets `seq`, `seq+1`, ... so its first line is unique per file even within one
+    // process. The GUI fingerprints the first 256 bytes of each ledger file; a shared head
+    // would collapse the three files into one consumed-offset entry and re-fold the tails.
+    std::uint32_t file_epoch_seq_ = 0;
     std::ofstream output_;
     std::mutex mutex_;
     bool failed_ = false;

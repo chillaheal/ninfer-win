@@ -3,12 +3,20 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <cstdint>
 
 namespace ninfer {
 
 void cuda_check(cudaError_t err, const char* expr, const char* file, int line);
 
 #define CUDA_CHECK(expr) ::ninfer::cuda_check((expr), #expr, __FILE__, __LINE__)
+
+// Non-owning execution facts passed to Ops whose launch policy depends on physical device
+// capacity. DeviceContext remains the owner and authoritative source of both values.
+struct DeviceExecutionView {
+    cudaStream_t stream               = nullptr;
+    std::int32_t multiprocessor_count = 0;
+};
 
 struct DeviceContext {
     int device                   = 0;

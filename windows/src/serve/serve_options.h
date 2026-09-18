@@ -22,10 +22,10 @@ struct ServeOptions {
     bool help_requested = false;
     std::string artifact_path;
     std::string host = "127.0.0.1";
-    int port         = 8080;
+    int port         = 8888;
     std::string api_key;                          // empty => no auth
     std::optional<std::string> model_id_override; // unset => artifact identity.model_id
-    std::string request_log_jsonl;                // empty => structured request logging disabled
+    std::string request_log_jsonl; // empty => disabled; parsing applies the default ledger path (D11) when the flag is absent
     std::string system_prompt_file;    // --system-prompt-file path; empty => flag absent
     std::string system_prompt_default; // loaded content; empty => no server default
     std::uint32_t max_context          = 8192;

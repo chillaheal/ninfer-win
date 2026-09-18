@@ -5,18 +5,22 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <malloc.h>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
 namespace {
 
-using AlignedBacking = std::unique_ptr<void, decltype(&std::free)>;
+using AlignedBacking = std::unique_ptr<void, decltype(&::_aligned_free)>;
 
 AlignedBacking make_backing(std::size_t bytes) {
-    void* data = std::aligned_alloc(256, bytes);
+    // MSVC has no aligned_alloc; _aligned_malloc (size, alignment) must be
+    // released with _aligned_free.
+    void* data = _aligned_malloc(bytes, 256);
     if (data == nullptr) { throw std::bad_alloc(); }
-    return AlignedBacking(data, &std::free);
+    return AlignedBacking(data, &::_aligned_free);
 }
 
 int fail(const char* label) {

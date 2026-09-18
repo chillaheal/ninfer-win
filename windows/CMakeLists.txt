@@ -79,8 +79,8 @@ if(WIN32)
   if(NOT EXISTS "${NINFER_FFMPEG_ROOT}/include/libavformat/avformat.h")
     message(FATAL_ERROR "FFmpeg headers not found under NINFER_FFMPEG_ROOT=${NINFER_FFMPEG_ROOT}")
   endif()
-  # INTERFACE IMPORTED (not UNKNOWN): it carries no library of its own â€” the real .libs live in
-  # INTERFACE_LINK_LIBRARIES â€” so CMake must not demand an IMPORTED_LOCATION at generate time.
+  # INTERFACE IMPORTED (not UNKNOWN): it carries no library of its own — the real .libs live in
+  # INTERFACE_LINK_LIBRARIES — so CMake must not demand an IMPORTED_LOCATION at generate time.
   add_library(PkgConfig::FFMPEG INTERFACE IMPORTED)
   set_target_properties(PkgConfig::FFMPEG PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${NINFER_FFMPEG_ROOT}/include"

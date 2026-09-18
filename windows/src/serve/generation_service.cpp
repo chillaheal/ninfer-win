@@ -80,6 +80,12 @@ ApiError request_error_to_api_error(const ninfer::RequestError& exception) {
         error.type   = "server_error";
         error.code   = "service_unavailable";
         break;
+    case ninfer::RequestErrorKind::CorruptGeneratedToken:
+        error.param.clear();
+        error.status = 500;
+        error.type   = "server_error";
+        error.code   = "corrupt_generated_token";
+        break;
     }
     return error;
 }

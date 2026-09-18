@@ -577,7 +577,7 @@ int test_parse_sampling_carried() {
 
 int test_response_serialization() {
     int failures = 0;
-    const CompletionUsage usage{10, 3};
+    const CompletionUsage usage{.prompt_tokens = 10, .completion_tokens = 3, .cached_tokens = 4};
     const Json j = Json::parse(
         make_chat_completion_response("id-1", "m", 111, "hello world", "", "stop", usage));
     failures += check(j.at("object") == "chat.completion", "response object");
@@ -594,6 +594,8 @@ int test_response_serialization() {
     failures += check(j.at("usage").at("prompt_tokens") == 10, "usage prompt_tokens");
     failures += check(j.at("usage").at("completion_tokens") == 3, "usage completion_tokens");
     failures += check(j.at("usage").at("total_tokens") == 13, "usage total_tokens");
+    failures += check(j.at("usage").at("prompt_tokens_details").at("cached_tokens") == 4,
+                      "usage prompt_tokens_details.cached_tokens");
 
     // Non-empty reasoning is attached as message.reasoning_content, content stays answer-only.
     const Json jr = Json::parse(make_chat_completion_response("id-2", "m", 111, "the answer",
@@ -628,6 +630,9 @@ int test_tool_response_serialization() {
     failures += check(call.at("function").at("arguments") == R"({"city":"Paris"})",
                       "tool function arguments");
     failures += check(j.at("usage").at("total_tokens") == 18, "tool usage total");
+    // Default CompletionUsage carries no cached tokens; the field is still emitted.
+    failures += check(j.at("usage").at("prompt_tokens_details").at("cached_tokens") == 0,
+                      "tool usage cached_tokens zero");
 
     const Json with_content = Json::parse(make_chat_completion_tool_response(
         "id-tool-2", "m", 223, "Calling weather.", "", calls, usage));
@@ -676,13 +681,15 @@ int test_chunk_serialization() {
     failures += check(!final_no_usage.contains("usage"), "no usage key when include_usage=false");
 
     // Dedicated usage chunk: empty choices, populated usage.
-    const CompletionUsage usage{2, 5};
+    const CompletionUsage usage{.prompt_tokens = 2, .completion_tokens = 5, .cached_tokens = 1};
     const Json usage_chunk = parse_sse(make_chat_chunk_usage("id", "m", 1, usage));
     failures += check(usage_chunk.at("choices").is_array() && usage_chunk.at("choices").empty(),
                       "usage chunk has empty choices");
     failures +=
         check(usage_chunk.at("usage").at("prompt_tokens") == 2, "usage chunk prompt_tokens");
     failures += check(usage_chunk.at("usage").at("total_tokens") == 7, "usage chunk total");
+    failures += check(usage_chunk.at("usage").at("prompt_tokens_details").at("cached_tokens") == 1,
+                      "usage chunk cached_tokens");
 
     failures += check(sse_done() == "data: [DONE]\n\n", "done sentinel");
     return failures;

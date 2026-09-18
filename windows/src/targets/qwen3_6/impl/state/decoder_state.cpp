@@ -106,6 +106,10 @@ PagedKVLayerView PagedKVCache::layer_view(std::uint32_t layer, Tensor block_tabl
     const bool scaled        = dtype_ == DType::I8 || dtype_ == DType::FP8_E4M3FN;
     const std::size_t stride = scaled ? 4ULL : 2ULL;
     const std::size_t base   = static_cast<std::size_t>(layer) * stride;
+    const KvCacheStorage storage =
+        dtype_ == DType::I8           ? KvCacheStorage::Int8Group64
+        : dtype_ == DType::FP8_E4M3FN ? KvCacheStorage::Fp8E4M3Row256
+                                      : KvCacheStorage::BFloat16;
     return PagedKVLayerView{
         .k_pages       = pages_.plane(base),
         .v_pages       = pages_.plane(base + 1),
@@ -116,6 +120,7 @@ PagedKVLayerView PagedKVCache::layer_view(std::uint32_t layer, Tensor block_tabl
         .num_kv_heads  = kv_heads_,
         .dtype         = dtype_,
         .quant_group   = quant_group_,
+        .storage       = storage,
     };
 }
 
@@ -124,6 +129,10 @@ PagedKVBatchLayerView PagedKVCache::batch_layer_view(std::uint32_t layer) const 
     const bool scaled        = dtype_ == DType::I8 || dtype_ == DType::FP8_E4M3FN;
     const std::size_t stride = scaled ? 4ULL : 2ULL;
     const std::size_t base   = static_cast<std::size_t>(layer) * stride;
+    const KvCacheStorage storage =
+        dtype_ == DType::I8           ? KvCacheStorage::Int8Group64
+        : dtype_ == DType::FP8_E4M3FN ? KvCacheStorage::Fp8E4M3Row256
+                                      : KvCacheStorage::BFloat16;
     return PagedKVBatchLayerView{
         .k_pages       = pages_.plane(base),
         .v_pages       = pages_.plane(base + 1),
@@ -134,6 +143,7 @@ PagedKVBatchLayerView PagedKVCache::batch_layer_view(std::uint32_t layer) const 
         .num_kv_heads  = kv_heads_,
         .dtype         = dtype_,
         .quant_group   = quant_group_,
+        .storage       = storage,
     };
 }
 

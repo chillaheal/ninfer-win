@@ -30,6 +30,8 @@ enum class KvCacheStorage : std::uint8_t {
     BFloat16,
     Int8Group64,
     Fp8E4M3Row256,
+    Nvfp4Group16,
+    Fp8KeyNvfp4Value,
 };
 
 enum class KvCapacityMode : std::uint8_t {
@@ -64,12 +66,15 @@ enum class SpeculativeBackend : std::uint8_t {
     None,
     Mtp,
     DFlash,
+    DFlash2,
 };
 
 struct SpeculativeOptions {
     SpeculativeBackend backend = SpeculativeBackend::None;
+    // Startup-fixed K: MTP 1..5; DFlash and DFlash2 1..15 (query width K+1).
     std::uint32_t draft_tokens = 0;
     ProposalHead proposal_head = ProposalHead::Full;
+    bool ngram = false;
 };
 
 struct LoadProgress {
@@ -367,6 +372,7 @@ enum class RequestErrorKind : std::uint8_t {
     QueueTimeout,
     Cancelled,
     Unavailable,
+    CorruptGeneratedToken,
 };
 
 class RequestError final : public std::invalid_argument {

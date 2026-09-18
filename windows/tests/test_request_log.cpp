@@ -65,7 +65,7 @@ int main() {
     options.speculative.backend            = ninfer::SpeculativeBackend::Mtp;
     options.speculative.draft_tokens       = 3;
     options.speculative.proposal_head      = ninfer::ProposalHead::Optimized;
-    options.enable_vision                  = false;
+    options.vision_mode                    = ninfer::VisionMode::Off;
     options.allow_prefix_reuse             = true;
     options.preserve_thinking              = true;
     options.default_thinking_budget        = 512;
@@ -82,7 +82,7 @@ int main() {
     engine_options.prefill_chunk                                   = options.prefill_chunk;
     engine_options.kv_cache                                        = options.kv_cache;
     engine_options.speculative                                     = options.speculative;
-    engine_options.enable_vision                                   = options.enable_vision;
+    engine_options.enable_vision                                   = options.vision_mode != ninfer::VisionMode::Off;
     engine_options.use_cuda_graph                                  = options.use_cuda_graph;
     engine_options.context_cache.device_state_slots                = 2;
     engine_options.context_cache.host_state_slots                  = 3;
@@ -588,18 +588,26 @@ int main() {
         writer.write_request_error(context, "generation failed");
     }
     std::ifstream input(log_path);
+    std::string marker_line;
     std::string first_line;
     std::string second_line;
     std::string third_line;
     std::string extra_line;
+    std::getline(input, marker_line);
     std::getline(input, first_line);
     std::getline(input, second_line);
     std::getline(input, third_line);
     std::getline(input, extra_line);
-    failures += check(!first_line.empty() && !second_line.empty() && !third_line.empty() &&
-                          extra_line.empty(),
+    failures += check(!marker_line.empty() && !first_line.empty() && !second_line.empty() &&
+                          !third_line.empty() && extra_line.empty(),
                       "JSONL writer did not append exactly one flushed line per event");
-    if (!first_line.empty() && !second_line.empty() && !third_line.empty()) {
+    if (!marker_line.empty() && !first_line.empty() && !second_line.empty() &&
+        !third_line.empty()) {
+        // A fresh base opens with a unique file_epoch marker line, then the appended events.
+        const Json marker = Json::parse(marker_line);
+        failures += check(marker.at("event") == "log_file_opened" &&
+                              !marker.value("file_epoch", std::string()).empty(),
+                          "missing or malformed fresh-base file_epoch marker");
         failures += check(Json::parse(first_line).at("event") == "request_start",
                           "first appended event mismatch");
         failures += check(Json::parse(second_line).at("event") == "request_rejected",
@@ -609,6 +617,151 @@ int main() {
     }
     input.close();
     std::filesystem::remove(log_path);
+
+    // Rotation and retention (user spec 2026-09-05): when the active file reaches
+    // kRequestLogRotateBytes the writer closes it, shifts .1 -> .2 (oldest dropped)
+    // and starts fresh at the same path: at most one active + two rotated files, and
+    // rotated files older than kRequestLogRetentionDays are dropped at rotation and at
+    // serve startup. Record order must survive the boundaries without loss.
+    const std::filesystem::path rot_base = std::filesystem::temp_directory_path() /
+        ("ninfer-rotate-" + std::to_string(current_process_id()) + ".jsonl");
+    const std::filesystem::path rot_first = std::filesystem::path(rot_base.string() + ".1");
+    const std::filesystem::path rot_second = std::filesystem::path(rot_base.string() + ".2");
+    std::filesystem::remove(rot_base);
+    std::filesystem::remove(rot_first);
+    std::filesystem::remove(rot_second);
+    // Count only throughput records: a fresh base now begins with a log_file_opened marker
+    // line, so the raw line count is one higher than the throughput record count that the
+    // rotation arithmetic is based on.
+    auto count_lines = [](const std::filesystem::path& p) {
+        std::ifstream in(p);
+        long long n = 0;
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.empty()) { continue; }
+            try {
+                if (Json::parse(line).value("event", std::string()) == "throughput") { ++n; }
+            } catch (const Json::exception&) {
+            }
+        }
+        return n;
+    };
+    auto last_timestamp = [](const std::filesystem::path& p) {
+        std::ifstream in(p);
+        std::string line;
+        std::uint64_t ts = 0;
+        while (std::getline(in, line)) {
+            if (!line.empty()) { ts = Json::parse(line).at("timestamp_unix_ms").get<std::uint64_t>(); }
+        }
+        return ts;
+    };
+    auto first_timestamp = [](const std::filesystem::path& p) {
+        std::ifstream in(p);
+        std::string line;
+        std::getline(in, line);
+        return Json::parse(line).at("timestamp_unix_ms").get<std::uint64_t>();
+    };
+    {
+        JsonlRequestLog probe(rot_base.string());
+        probe.write_throughput(throughput);  // (rot_base now holds the fresh-base marker + this)
+    }
+    // Measure the fresh-base marker line and one throughput line by diffing sizes on a
+    // throwaway path: a fresh base now starts with a log_file_opened marker, so the raw size
+    // of rot_base is not a single throughput line and the per-file throughput count must be
+    // based on the throughput line size alone.
+    const std::filesystem::path measure_base = std::filesystem::temp_directory_path() /
+        ("ninfer-rotate-measure-" + std::to_string(current_process_id()) + ".jsonl");
+    std::filesystem::remove(measure_base);
+    std::uint64_t marker_bytes = 0;
+    std::uint64_t line_bytes   = 0;
+    {
+        JsonlRequestLog probe(measure_base.string());  // fresh base: writes the marker
+        marker_bytes = static_cast<std::uint64_t>(std::filesystem::file_size(measure_base));
+        probe.write_throughput(throughput);
+        const std::uint64_t after_one =
+            static_cast<std::uint64_t>(std::filesystem::file_size(measure_base));
+        probe.write_throughput(throughput);
+        line_bytes = static_cast<std::uint64_t>(std::filesystem::file_size(measure_base)) -
+                     after_one;
+    }
+    std::filesystem::remove(measure_base);
+    const std::uint64_t per_file =
+        (kRequestLogRotateBytes - marker_bytes + line_bytes - 1) / line_bytes;  // throughput
+        // lines that fit in one fresh base before it rotates
+    const std::uint64_t total = 2 * per_file + 10;  // crosses both boundaries + margin
+    {
+        JsonlRequestLog writer(rot_base.string());
+        for (std::uint64_t i = 2; i < total; ++i) {
+            writer.write_throughput(throughput);
+            if (i == per_file) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));  // strict boundary
+            }
+        }
+    }
+    failures += check(std::filesystem::exists(rot_first) && std::filesystem::exists(rot_second),
+                      "rotation did not produce .1 and .2 files");
+    failures += check(count_lines(rot_first) == static_cast<long long>(per_file) &&
+                          count_lines(rot_second) == static_cast<long long>(per_file),
+                      "rotated file line counts do not match the rotation boundary");
+    failures += check(std::filesystem::file_size(rot_base) < kRequestLogRotateBytes,
+                      "active file grew past the rotation size");
+    const std::uint64_t boundary_ts = last_timestamp(rot_second);
+    failures += check(first_timestamp(rot_first) > boundary_ts,
+                      "record order not preserved across the rotation boundary");
+    // Retention + shift: an 8-day-old .2 must not survive the next log open, and the third
+    // rotation must shift the remaining files with record order preserved.
+    if (std::filesystem::exists(rot_second)) {
+        std::filesystem::last_write_time(
+            rot_second,
+            std::filesystem::file_time_type::clock::now() - std::chrono::days{8});
+    }
+    {
+        // Reopen prunes the stale .2; enough appends cross the third rotation boundary.
+        JsonlRequestLog writer(rot_base.string());
+        for (std::uint64_t i = 0; i < per_file + 5; ++i) {
+            writer.write_throughput(throughput);
+        }
+    }
+    failures += check(count_lines(rot_first) == static_cast<long long>(per_file),
+                      "previous active file was not shifted to .1 on the third rotation");
+    failures += check(count_lines(rot_second) == static_cast<long long>(per_file) &&
+                          last_timestamp(rot_second) > boundary_ts,
+                      "rotated files were not shifted with record order preserved");
+
+    // Retention at serve startup: a pre-existing 8-day-old .1 is dropped, a 2-day-old .2
+    // is kept.
+    const std::filesystem::path keep_base = std::filesystem::temp_directory_path() /
+        ("ninfer-rotate-startup-" + std::to_string(current_process_id()) + ".jsonl");
+    const std::filesystem::path keep_first = std::filesystem::path(keep_base.string() + ".1");
+    const std::filesystem::path keep_second = std::filesystem::path(keep_base.string() + ".2");
+    std::filesystem::remove(keep_base);
+    std::filesystem::remove(keep_first);
+    std::filesystem::remove(keep_second);
+    {
+        JsonlRequestLog writer(keep_base.string());
+        writer.write_throughput(throughput);
+    }
+    {
+        std::ofstream old(keep_first);
+        old << '{}\n';
+        std::ofstream recent(keep_second);
+        recent << '{}\n';
+    }
+    const auto now_fs = std::filesystem::file_time_type::clock::now();
+    std::filesystem::last_write_time(keep_first, now_fs - std::chrono::days{8});
+    std::filesystem::last_write_time(keep_second, now_fs - std::chrono::days{2});
+    {
+        JsonlRequestLog writer(keep_base.string());
+        (void)writer;
+    }
+    failures += check(!std::filesystem::exists(keep_first) && std::filesystem::exists(keep_second),
+                      "startup retention kept an 8-day-old rotated file or dropped the fresh one");
+    std::filesystem::remove(rot_base);
+    std::filesystem::remove(rot_first);
+    std::filesystem::remove(rot_second);
+    std::filesystem::remove(keep_base);
+    std::filesystem::remove(keep_first);
+    std::filesystem::remove(keep_second);
 
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

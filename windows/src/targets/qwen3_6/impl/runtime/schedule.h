@@ -38,6 +38,7 @@ struct ExecutionCore {
     Tensor& prefill_hidden;
     std::uint32_t prefill_chunk;
     ProposalHead proposal_head;
+    bool ngram = false;
 };
 
 struct PrefillContext {
@@ -115,6 +116,8 @@ struct TargetVerifyFrameView {
     Tensor target_tokens;
     Tensor drafts;
     Tensor current_extents;
+    Tensor candidate_ids;
+    Tensor proposal_q;
     Tensor frontiers;
     Tensor anchors;
     Tensor licensed_tokens;

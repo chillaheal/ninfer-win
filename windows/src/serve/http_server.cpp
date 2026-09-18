@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 namespace ninfer::serve {
@@ -29,6 +30,7 @@ struct StreamingRequest {
     PreparedRequest prepared;
     std::atomic<bool> cancelled{false};
     bool started = false;
+    std::mutex sink_mutex;
 };
 
 class ClientDisconnected final : public std::exception {
@@ -38,12 +40,59 @@ public:
 
 void write_stream_item(httplib::DataSink& sink, StreamingRequest& request,
                        const std::string& item) {
+    std::lock_guard<std::mutex> lock(request.sink_mutex);
     if (request.cancelled.load(std::memory_order_acquire) ||
         !sink.write(item.data(), item.size())) {
         request.cancelled.store(true, std::memory_order_release);
         throw ClientDisconnected();
     }
 }
+
+// SSE keep-alive pings so short-timeout clients survive the silent prefill window; writes are serialized via sink_mutex.
+class SinkKeepAlive final {
+public:
+    SinkKeepAlive(httplib::DataSink& sink, StreamingRequest& request, std::string frame,
+                  int interval_ms)
+        : sink_(sink), request_(request), frame_(std::move(frame)), interval_ms_(interval_ms) {
+        thread_ = std::thread([this] { run(); });
+    }
+
+    ~SinkKeepAlive() { stop(); }
+
+    void stop() {
+        stop_.store(true, std::memory_order_release);
+        if (thread_.joinable()) { thread_.join(); }
+    }
+
+private:
+    void run() {
+        constexpr int kStepMs = 100;
+        while (!stop_.load(std::memory_order_acquire)) {
+            for (int waited = 0; waited < interval_ms_ &&
+                 !stop_.load(std::memory_order_acquire);
+                 waited += kStepMs) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(kStepMs));
+            }
+            if (stop_.load(std::memory_order_acquire) ||
+                request_.cancelled.load(std::memory_order_acquire)) {
+                break;
+            }
+            std::lock_guard<std::mutex> lock(request_.sink_mutex);
+            if (request_.cancelled.load(std::memory_order_acquire)) { break; }
+            if (!sink_.write(frame_.data(), frame_.size())) {
+                request_.cancelled.store(true, std::memory_order_release);
+                break;
+            }
+        }
+    }
+
+    httplib::DataSink& sink_;
+    StreamingRequest& request_;
+    std::string frame_;
+    int interval_ms_;
+    std::atomic<bool> stop_{false};
+    std::thread thread_;
+};
 
 void set_owned_content(httplib::Response& response, std::string body,
                        std::shared_ptr<RequestLifetime> lifetime) {
@@ -532,7 +581,12 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 return req.is_connection_alive && !req.is_connection_alive();
             });
             log_request_done(log_context, outcome);
-            const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
+            const CompletionUsage usage{
+                .prompt_tokens     = outcome.prompt_tokens,
+                .completion_tokens = outcome.completion_tokens,
+                .cached_tokens     = std::clamp(
+                    static_cast<int>(outcome.metrics.prefix_cache_hit_tokens), 0,
+                    outcome.prompt_tokens)};
             std::string response_body;
             if (!outcome.tool_calls.empty()) {
                 response_body = make_chat_completion_tool_response(
@@ -617,7 +671,12 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                                               include_usage));
                 }
                 if (include_usage) {
-                    const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
+                    const CompletionUsage usage{
+                        .prompt_tokens     = outcome.prompt_tokens,
+                        .completion_tokens = outcome.completion_tokens,
+                        .cached_tokens     = std::clamp(
+                            static_cast<int>(outcome.metrics.prefix_cache_hit_tokens), 0,
+                            outcome.prompt_tokens)};
                     write_stream_item(sink, *stream,
                                       make_chat_chunk_usage(id, model, created, usage));
                 }
@@ -833,7 +892,8 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             if (request.server_tools.empty()) {
                 const GenerationOutcome outcome = service_->run(prepared, nullptr, is_cancelled);
                 log_request_done(log_context, outcome);
-                const CompletionUsage usage{outcome.prompt_tokens, outcome.completion_tokens};
+                const CompletionUsage usage{.prompt_tokens     = outcome.prompt_tokens,
+                                            .completion_tokens = outcome.completion_tokens};
                 const char* stop_reason =
                     messages_stop_reason(outcome.finish_reason, !outcome.tool_calls.empty());
                 set_owned_content(res,
@@ -847,7 +907,8 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                 // client-facing tool result. Reasoning is not part of the wrapped result.
                 loop = run_server_tool_loop(request, prepared, is_cancelled);
                 log_request_done(log_context, loop.final_outcome);
-                const CompletionUsage usage{loop.input_tokens, loop.output_tokens};
+                const CompletionUsage usage{.prompt_tokens     = loop.input_tokens,
+                                            .completion_tokens = loop.output_tokens};
                 const char* stop_reason =
                     messages_stop_reason(loop.final_outcome.finish_reason,
                                          !loop.final_outcome.tool_calls.empty());
@@ -900,6 +961,8 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             try {
                 write_stream_item(sink, *stream, make_message_start(id, model, input_tokens));
 
+                SinkKeepAlive keepalive(sink, *stream, make_messages_ping(), 5000);
+
                 if (server_tools) {
                     // Server-tool sub-request: the loop runs the full multi-phase exchange
                     // here (intermediate phases never stream). The client receives one text
@@ -936,6 +999,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                                                  !loop.final_outcome.tool_calls.empty()),
                             loop.output_tokens));
                     write_stream_item(sink, *stream, make_message_stop());
+                    keepalive.stop();
                     sink.done();
                     return true;
                 }
@@ -1013,6 +1077,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                 write_stream_item(sink, *stream,
                                   make_message_delta(stop_reason, outcome.completion_tokens));
                 write_stream_item(sink, *stream, make_message_stop());
+                keepalive.stop();
                 sink.done();
                 return true;
             } catch (const ClientDisconnected& e) {

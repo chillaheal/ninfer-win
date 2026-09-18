@@ -273,14 +273,20 @@ ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
     while (pos < text.size()) {
         skip_ws(text, pos);
         if (pos >= text.size()) { break; }
-        if (!starts_with_at(text, pos, kToolOpen)) { return fallback(text); }
+        // Only reachable once at least one call was already pushed: a stray token after the
+        // last complete marker must not discard the good prefix (keep the parsed calls).
+        if (!starts_with_at(text, pos, kToolOpen)) { break; }
         const std::size_t inner_begin = pos + kToolOpen.size();
         const std::size_t close       = text.find(kToolClose, inner_begin);
-        if (close == std::string::npos) { return fallback(text); }
+        if (close == std::string::npos) {
+            if (out.tool_calls.empty()) { return fallback(text); }
+            break;
+        }
         ToolCall call;
         if (!parse_one_tool_call(std::string_view(text).substr(inner_begin, close - inner_begin),
                                  max_tool_name_length, contracts, call)) {
-            return fallback(text);
+            if (out.tool_calls.empty()) { return fallback(text); }
+            break;
         }
         out.tool_calls.push_back(std::move(call));
         pos = close + kToolClose.size();

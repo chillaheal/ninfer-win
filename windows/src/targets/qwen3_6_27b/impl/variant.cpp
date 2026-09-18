@@ -150,9 +150,17 @@ std::vector<GraphExecutionProfile> Variant::mtp_graph_profiles(std::uint32_t cap
     return graph_profiles_through(capacity - 1, ends);
 }
 
-std::vector<GraphExecutionProfile> Variant::dflash_graph_profiles(std::uint32_t, std::uint32_t,
-                                                                  std::uint32_t) {
-    return {};
+std::vector<GraphExecutionProfile>
+Variant::dflash_graph_profiles(std::uint32_t capacity, std::uint32_t draft_window, std::uint32_t) {
+    if (capacity == 0 || draft_window == 0 || draft_window > maximum_dflash_draft_tokens) {
+        throw std::invalid_argument("invalid DFlash2 graph dimensions");
+    }
+    // Bounded attention envelopes; each tier owns its topology and can change kernel decomposition.
+    auto profiles = graph_profiles_through(capacity - 1, {96, 511, 2047, 8191, 32767});
+    for (std::size_t i = 0; i < profiles.size(); ++i) {
+        profiles[i].topology_class = static_cast<std::uint32_t>(i);
+    }
+    return profiles;
 }
 
 void Variant::attention_projection(const Tensor& hidden,
@@ -277,18 +285,21 @@ void Variant::gdn_output_projection(const Tensor& hidden, const Weight& weight, 
 void Variant::gdn_norm_control_projection(const Tensor& residual, const Tensor& norm_weight,
                                           float eps, const GdnProjectionWeights& weights,
                                           Tensor& hidden, Tensor& g, Tensor& beta,
-                                          WorkspaceArena& workspace, cudaStream_t stream) {
+                                          WorkspaceArena& workspace, cudaStream_t stream,
+                                          std::int32_t multiprocessor_count) {
     if (const auto* split =
             std::get_if<SplitGdnControlProjectionPayload>(&weights.control_projection)) {
         ops::gdn_norm_gating_proj(residual, norm_weight, eps, split->a_projection,
                                   split->b_projection, weights.a_log, weights.dt_bias, workspace,
-                                  hidden, g, beta, stream);
+                                  hidden, g, beta,
+                                  DeviceExecutionView{stream, multiprocessor_count});
         return;
     }
     const Weight& fused =
         std::get<FusedGdnControlProjectionPayload>(weights.control_projection).a_b_projection;
     ops::gdn_norm_gating_proj(residual, norm_weight, eps, fused, weights.a_log, weights.dt_bias,
-                              workspace, hidden, g, beta, stream);
+                              workspace, hidden, g, beta,
+                              DeviceExecutionView{stream, multiprocessor_count});
 }
 
 void Variant::post_mixer(const Tensor& hidden, const PostMixerWeights& weights, Tensor& residual,
@@ -346,6 +357,7 @@ std::size_t Variant::attention_projection_workspace_capacity_bytes(WeightsProfil
     case WeightsProfile::Qwen38GroupwiseInt:
         return 0;
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return ops::attn_input_proj_workspace_capacity_bytes(
             QType::NVFP4, 14336, TextConfig::hidden, kNvfp4TextPolicy, first, last);
     case WeightsProfile::Qwen38Nvfp4:
@@ -365,6 +377,7 @@ std::size_t Variant::attention_output_projection_workspace_capacity_bytes(
                                                         TextConfig::query_size,
                                                         ops::LinearPolicy::A16Only, first, last);
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return ops::linear_add_workspace_capacity_bytes(QType::NVFP4, TextConfig::hidden,
                                                         TextConfig::query_size, kNvfp4TextPolicy,
                                                         first, last);
@@ -386,6 +399,7 @@ std::size_t Variant::gdn_input_projection_workspace_capacity_bytes(WeightsProfil
     case WeightsProfile::Qwen38GroupwiseInt:
         return 0;
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return ops::gdn_input_proj_workspace_capacity_bytes(QType::NVFP4, 16384, TextConfig::hidden,
                                                             kNvfp4TextPolicy, first, last);
     case WeightsProfile::Qwen38Nvfp4:
@@ -407,6 +421,7 @@ std::size_t Variant::gdn_input_projection_snapshot_workspace_capacity_bytes(
                             TextConfig::key_dim, TextConfig::key_dim, TextConfig::value_dim,
                             batch_size, first, last));
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return std::max(kMinimumLeafWorkspaceBytes,
                         ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
                             QType::NVFP4, 16384, TextConfig::hidden, kNvfp4TextPolicy, batch_size,
@@ -432,6 +447,7 @@ std::size_t Variant::gdn_input_projection_record_workspace_capacity_bytes(
                             TextConfig::key_dim, TextConfig::key_dim, TextConfig::value_dim,
                             batch_size, first, last));
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return std::max(kMinimumLeafWorkspaceBytes,
                         ops::gdn_input_proj_conv_record_workspace_capacity_bytes(
                             QType::NVFP4, 16384, TextConfig::hidden, kNvfp4TextPolicy, batch_size,
@@ -457,6 +473,7 @@ std::size_t Variant::gdn_output_projection_workspace_capacity_bytes(WeightsProfi
                                                         TextConfig::value_dim,
                                                         ops::LinearPolicy::A16Only, first, last);
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return ops::linear_add_workspace_capacity_bytes(
             QType::NVFP4, TextConfig::hidden, TextConfig::value_dim, kNvfp4TextPolicy, first, last);
     case WeightsProfile::Qwen38Nvfp4:
@@ -483,6 +500,7 @@ std::size_t Variant::post_mixer_workspace_capacity_bytes(WeightsProfile weights_
         return post_mixer_workspace_bytes(QType::Q4G64_F16S, QType::Q5G64_F16S,
                                           ops::LinearPolicy::A16Only, first, last);
     case WeightsProfile::Qwen36Nvfp4:
+    case WeightsProfile::Qwen38Nvfp4Full:
         return post_mixer_workspace_bytes(QType::NVFP4, QType::NVFP4, kNvfp4TextPolicy, first,
                                           last);
     case WeightsProfile::Qwen38Nvfp4: {

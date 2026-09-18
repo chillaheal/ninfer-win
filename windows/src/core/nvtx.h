@@ -58,6 +58,12 @@ enum class Name : std::size_t {
     SparseMoePrefill,
     SparseMoeSmallT,
     SparseMoeDecode,
+    DFlashContextAppend,
+    DFlashProposal,
+    DFlashLayer,
+    DFlashAttention,
+    DFlashMlp,
+    DecodeDFlashTarget,
     Count,
 };
 
@@ -143,6 +149,12 @@ enum class Name : std::size_t {
         "sparse_moe.prefill",
         "sparse_moe.small_t",
         "sparse_moe.decode",
+        "dflash.context_append",
+        "dflash.proposal",
+        "dflash.layer",
+        "dflash.attention",
+        "dflash.mlp",
+        "decode.dflash.target",
     };
     static const auto handles = [] {
         std::array<nvtxStringHandle_t, names.size()> out{};
