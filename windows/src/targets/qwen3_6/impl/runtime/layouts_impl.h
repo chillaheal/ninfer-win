@@ -716,7 +716,8 @@ void validate_target_options(DeviceContext& device, const EngineOptions& options
         if (options.speculative.draft_tokens == 0 || options.speculative.draft_tokens > 15) {
             throw std::invalid_argument("masked draft window must be in [1,15]");
         }
-        if (options.enable_vision) {
+        if (options.speculative.backend == SpeculativeBackend::DFlash &&
+            options.enable_vision) {
             throw std::invalid_argument("DFlash and Vision cannot be enabled together");
         }
         break;

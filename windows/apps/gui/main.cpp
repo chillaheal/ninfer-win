@@ -900,15 +900,6 @@ void serve_child(HWND hwnd) {
         }
     }
 
-    // The engine rejects dflash2 + vision (cli/serve option validation);
-    // surface it up front instead of dying at child launch.
-    const int spec_sel   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
-    const int vision_sel = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
-    if ((spec_sel == 2 /* dflash2 */ || spec_sel == 3 /* dflash2+ngram */) && vision_sel != 0 /* off */) {
-        set_status(hwnd, L"dflash2 cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
-        return;
-    }
-
     // A serve already answering on the target port would make the new child die on
     // bind (or the probe would fail on VRAM pressure) with no useful status; detect
     // it up front via /health (the same helper the CT editor uses to refresh).

@@ -761,8 +761,8 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
     if (model.mtp.has_value() && model.dflash.has_value()) {
         throw std::invalid_argument("MTP and DFlash model views are mutually exclusive");
     }
-    if (model.dflash.has_value() && model.vision.has_value()) {
-        throw std::invalid_argument("DFlash and Vision model views are mutually exclusive");
+    if (model.dflash.has_value() && model.vision.has_value() && !plan.features.dflash2()) {
+        throw std::invalid_argument("DFlash (v1) and Vision model views are mutually exclusive");
     }
     if (workspace_plan.general_capacity == 0 ||
         workspace_plan.vision.has_value() != vision_enabled ||
