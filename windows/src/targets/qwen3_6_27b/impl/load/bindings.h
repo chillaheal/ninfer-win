@@ -8,6 +8,7 @@
 
 #include "artifact/binder.h"
 #include "artifact/materializer.h"
+#include "artifact/v3/materializer.h"
 #include "core/tensor.h"
 
 #include <array>
@@ -165,6 +166,12 @@ struct ArtifactLoadPlan {
 ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_profile,
                                qwen3_6::StartupFeatures features);
 
+// v3 load-side (bindings_v3.{h,cpp}): same RuntimeModelView, materialized over whole-parent
+// WeightRegion views of the v3 fused taxonomy. Forward-declared here only so the v3
+// LoadedModelData / Impl constructors can take it by value; the real type + functions live in
+// bindings_v3.h.
+struct V3BindingPlan;
+
 struct DensePostMixerPayload {
     Weight gate_up;
     Weight down;
@@ -232,13 +239,14 @@ using MtpWeights           = RuntimeModelView::MtpLayer;
 class LoadedModelData {
 public:
     LoadedModelData(BindingPlan plan, artifact::MaterializedArtifact materialized);
+    LoadedModelData(V3BindingPlan plan, artifact::v3::MaterializedArtifact materialized);
 
     LoadedModelData(const LoadedModelData&)            = delete;
     LoadedModelData& operator=(const LoadedModelData&) = delete;
     LoadedModelData(LoadedModelData&&)                 = delete;
     LoadedModelData& operator=(LoadedModelData&&)      = delete;
 
-    artifact::MaterializedArtifact backing;
+    std::variant<artifact::MaterializedArtifact, artifact::v3::MaterializedArtifact> backing;
     qwen3_6::FrontendResources frontend;
     RuntimeModelView runtime;
 };
@@ -248,6 +256,10 @@ public:
     Impl(WeightsProfile weights_profile_in, BindingPlan plan,
          artifact::MaterializedArtifact materialized)
         : weights_profile(weights_profile_in), data(std::move(plan), std::move(materialized)) {}
+
+    // Defined in bindings_v3.cpp (needs complete V3BindingPlan).
+    Impl(WeightsProfile weights_profile_in, V3BindingPlan plan,
+         artifact::v3::MaterializedArtifact materialized);
 
     WeightsProfile weights_profile;
     LoadedModelData data;

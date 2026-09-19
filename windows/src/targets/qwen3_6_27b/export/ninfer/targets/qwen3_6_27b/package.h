@@ -18,6 +18,12 @@ class Binder;
 class MaterializedArtifact;
 struct ArtifactIdentity;
 struct MaterializationPlan;
+
+namespace v3 {
+class Binder;
+class MaterializedArtifact;
+struct MaterializationPlan;
+} // namespace v3
 } // namespace artifact
 
 namespace targets::qwen3_6_27b {
@@ -60,6 +66,29 @@ private:
     friend struct qwen3_6_27b::Package;
 };
 
+// v3 load-side plan mirror. Wraps the v3 MaterializationPlan (whole-parent fused taxonomy) so the
+// registry can read device capacity preflight before materializing, then hand it to construct.
+class LoadPlanV3 {
+public:
+    LoadPlanV3(LoadPlanV3&&) noexcept;
+    LoadPlanV3& operator=(LoadPlanV3&&) noexcept;
+    ~LoadPlanV3();
+
+    LoadPlanV3(const LoadPlanV3&)            = delete;
+    LoadPlanV3& operator=(const LoadPlanV3&) = delete;
+
+    // Returned by value: the v3 materializer consumes the plan as an rvalue (MaterializationPlan&&),
+    // so the caller moves the temporary straight into it.
+    [[nodiscard]] artifact::v3::MaterializationPlan materialization() const;
+
+private:
+    class Impl;
+    explicit LoadPlanV3(std::unique_ptr<Impl> impl) noexcept;
+    std::unique_ptr<Impl> impl_;
+
+    friend struct qwen3_6_27b::Package;
+};
+
 class LoadedModel {
 public:
     ~LoadedModel();
@@ -87,6 +116,7 @@ struct Package {
 
     using WeightsProfile             = detail::WeightsProfile;
     using LoadPlan                   = detail::LoadPlan;
+    using LoadPlanV3                 = detail::LoadPlanV3;
     using LoadedModel                = detail::LoadedModel;
     using Frontend                   = detail::Frontend;
     using PreparedPrompt             = detail::PreparedPrompt;
@@ -127,6 +157,11 @@ struct Package {
                                             WeightsProfile weights_profile);
     [[nodiscard]] static std::unique_ptr<LoadedModel>
     construct_loaded_model(LoadPlan&& plan, artifact::MaterializedArtifact&& materialized);
+    [[nodiscard]] static LoadPlanV3 plan_load_v3(artifact::v3::Binder& binder,
+                                                const EngineOptions& options,
+                                                WeightsProfile weights_profile);
+    [[nodiscard]] static std::unique_ptr<LoadedModel>
+    construct_loaded_model_v3(LoadPlanV3&& plan, artifact::v3::MaterializedArtifact&& materialized);
     [[nodiscard]] static Frontend make_frontend(const LoadedModel& model,
                                                 const EngineOptions& options);
     [[nodiscard]] static SequencePlanner make_sequence_planner(DeviceContext& device,

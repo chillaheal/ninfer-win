@@ -4,6 +4,7 @@
 
 #include "artifact/reader.h"
 #include "targets/qwen3_6_27b/impl/load/bindings.h"
+#include "targets/qwen3_6_27b/impl/load/bindings_v3.h"
 #include "targets/qwen3_6_27b/impl/variant.h"
 
 #include <stdexcept>
@@ -28,6 +29,26 @@ LoadPlan::~LoadPlan()                              = default;
 
 const artifact::MaterializationPlan& LoadPlan::materialization() const {
     if (impl_ == nullptr) { throw std::logic_error("target load plan is empty"); }
+    return impl_->plan.materialization;
+}
+
+class LoadPlanV3::Impl {
+public:
+    Impl(WeightsProfile weights_profile_in, V3LoadPlan target_plan)
+        : weights_profile(weights_profile_in), plan(std::move(target_plan)) {}
+
+    WeightsProfile weights_profile;
+    V3LoadPlan plan;
+};
+
+LoadPlanV3::LoadPlanV3(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
+
+LoadPlanV3::LoadPlanV3(LoadPlanV3&&) noexcept            = default;
+LoadPlanV3& LoadPlanV3::operator=(LoadPlanV3&&) noexcept = default;
+LoadPlanV3::~LoadPlanV3()                                = default;
+
+artifact::v3::MaterializationPlan LoadPlanV3::materialization() const {
+    if (impl_ == nullptr) { throw std::logic_error("target v3 load plan is empty"); }
     return impl_->plan.materialization;
 }
 
@@ -112,6 +133,24 @@ Package::LoadPlan Package::plan_load(artifact::Binder& binder, const EngineOptio
 std::unique_ptr<Package::LoadedModel>
 Package::construct_loaded_model(LoadPlan&& plan, artifact::MaterializedArtifact&& materialized) {
     if (plan.impl_ == nullptr) { throw std::invalid_argument("target load plan is empty"); }
+    auto impl = std::make_unique<LoadedModel::Impl>(
+        plan.impl_->weights_profile, std::move(plan.impl_->plan.bindings), std::move(materialized));
+    plan.impl_.reset();
+    return std::unique_ptr<LoadedModel>(new LoadedModel(std::move(impl)));
+}
+
+Package::LoadPlanV3 Package::plan_load_v3(artifact::v3::Binder& binder,
+                                          const EngineOptions& options,
+                                          WeightsProfile weights_profile) {
+    return LoadPlanV3(std::make_unique<LoadPlanV3::Impl>(
+        weights_profile,
+        detail::bind_artifact_v3(binder, weights_profile, qwen3_6::startup_features(options))));
+}
+
+std::unique_ptr<Package::LoadedModel>
+Package::construct_loaded_model_v3(LoadPlanV3&& plan,
+                                   artifact::v3::MaterializedArtifact&& materialized) {
+    if (plan.impl_ == nullptr) { throw std::invalid_argument("target v3 load plan is empty"); }
     auto impl = std::make_unique<LoadedModel::Impl>(
         plan.impl_->weights_profile, std::move(plan.impl_->plan.bindings), std::move(materialized));
     plan.impl_.reset();

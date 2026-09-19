@@ -1,5 +1,7 @@
 #include <ninfer/targets/qwen3_6/decoder_state.h>
 
+#include "core/paged_kv_storage.h"
+
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -21,7 +23,6 @@ PagedKVCacheLayout plan_cache(LayoutBuilder& builder, std::uint32_t layers, std:
         kv_heads <= 0 || head_dim <= 0 || table_rows <= 0) {
         throw std::invalid_argument("Paged KV cache geometry is invalid");
     }
-    const bool scaled = dtype == DType::I8 || dtype == DType::FP8_E4M3FN;
     const bool valid_profile =
         (dtype == DType::BF16 && quant_group == 0) ||
         (dtype == DType::I8 && quant_group == kKvInt8QuantGroup && head_dim % quant_group == 0) ||
@@ -37,13 +38,24 @@ PagedKVCacheLayout plan_cache(LayoutBuilder& builder, std::uint32_t layers, std:
     }
 
     KVPageGeometry geometry;
-    geometry.planes.reserve(static_cast<std::size_t>(layers) * (scaled ? 4ULL : 2ULL));
+    const KvCacheStorage storage =
+        dtype == DType::I8           ? KvCacheStorage::Int8Group64
+        : dtype == DType::FP8_E4M3FN ? KvCacheStorage::Fp8E4M3Row256
+                                     : KvCacheStorage::BFloat16;
+    const PagedKVStorageLayout layer_storage = paged_kv_storage_layout(storage, head_dim);
+    geometry.planes.reserve(static_cast<std::size_t>(layers) * layer_storage.planes_per_layer());
     for (std::uint32_t layer = 0; layer < layers; ++layer) {
-        geometry.planes.push_back({dtype, head_dim, kv_heads, 256});
-        geometry.planes.push_back({dtype, head_dim, kv_heads, 256});
-        if (scaled) {
-            geometry.planes.push_back({DType::FP16, head_dim / quant_group, kv_heads, 256});
-            geometry.planes.push_back({DType::FP16, head_dim / quant_group, kv_heads, 256});
+        geometry.planes.push_back({layer_storage.key.data_dtype,
+                                  layer_storage.key.data_leading_extent, kv_heads, 256});
+        geometry.planes.push_back({layer_storage.value.data_dtype,
+                                  layer_storage.value.data_leading_extent, kv_heads, 256});
+        if (layer_storage.key.has_scale()) {
+            geometry.planes.push_back({layer_storage.key.scale_dtype,
+                                      layer_storage.key.scale_leading_extent, kv_heads, 256});
+        }
+        if (layer_storage.value.has_scale()) {
+            geometry.planes.push_back({layer_storage.value.scale_dtype,
+                                      layer_storage.value.scale_leading_extent, kv_heads, 256});
         }
     }
     return PagedKVCacheLayout{

@@ -629,7 +629,8 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
 }
 
 LoadedModelData::LoadedModelData(BindingPlan plan, artifact::MaterializedArtifact materialized)
-    : backing(std::move(materialized)) {
+    : backing(std::in_place_type<artifact::MaterializedArtifact>, std::move(materialized)) {
+    auto& backing = std::get<artifact::MaterializedArtifact>(this->backing);
     frontend = qwen3_6::take_frontend_resources(backing, plan.frontend);
 
     runtime.weights_arena = &backing.device_arena();

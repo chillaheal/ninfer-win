@@ -512,7 +512,7 @@ void apply_model_sizing_defaults(HWND hwnd, const std::wstring& model) {
     // Only the dflash2 family carries dedicated serving defaults; every other model
     // keeps the Qwen3.8-27B defaults seeded at startup.
     if (model.find(L"dflash2") != std::wstring::npos) {
-        ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 3, 0);    // dflash2
+        ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 2, 0);    // dflash2
         ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
         ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"262144");
         ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"7");
@@ -585,12 +585,12 @@ void append_sampling_args(HWND hwnd, std::vector<std::wstring>& args, std::uint3
         args.push_back(kVisionRegimes[vision_mode - 1]);
     }
     if (spec_idx > 0) {
-        // dflash2+ngram (combo index 4) reuses the dflash2 backend and adds ngram
+        // dflash2+ngram (combo index 3) reuses the dflash2 backend and adds ngram
         // self-speculation; it reuses the draft-tokens (K) field.
-        static const wchar_t* kSpecs[] = {L"mtp", L"dflash", L"dflash2", L"dflash2", L"dflash2"};
+        static const wchar_t* kSpecs[] = {L"mtp", L"dflash2", L"dflash2"};
         args.push_back(L"--spec");
         args.push_back(kSpecs[spec_idx - 1]);
-        if (spec_idx == 4) { args.push_back(L"--ngram"); }  // dflash2+ngram
+        if (spec_idx == 3) { args.push_back(L"--ngram"); }  // dflash2+ngram
         if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
         if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
     }
@@ -682,12 +682,12 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
         args.push_back(kKvDtypes[kv_idx - 1]);
     }
     if (spec_idx > 0) {
-        // dflash2+ngram (combo index 4) reuses the dflash2 backend and adds ngram
+        // dflash2+ngram (combo index 3) reuses the dflash2 backend and adds ngram
         // self-speculation; it reuses the draft-tokens (K) field.
-        static const wchar_t* kSpecs[] = {L"mtp", L"dflash", L"dflash2", L"dflash2", L"dflash2"};
+        static const wchar_t* kSpecs[] = {L"mtp", L"dflash2", L"dflash2"};
         args.push_back(L"--spec");
         args.push_back(kSpecs[spec_idx - 1]);
-        if (spec_idx == 4) { args.push_back(L"--ngram"); }  // dflash2+ngram
+        if (spec_idx == 3) { args.push_back(L"--ngram"); }  // dflash2+ngram
         if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
         if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
     }
@@ -900,12 +900,12 @@ void serve_child(HWND hwnd) {
         }
     }
 
-    // The engine rejects dflash/dflash2 + vision (cli/serve option validation);
+    // The engine rejects dflash2 + vision (cli/serve option validation);
     // surface it up front instead of dying at child launch.
     const int spec_sel   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
     const int vision_sel = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
-    if ((spec_sel == 2 /* dflash */ || spec_sel == 3 /* dflash2 */ || spec_sel == 4 /* dflash2+ngram */) && vision_sel != 0 /* off */) {
-        set_status(hwnd, L"dflash/dflash2 cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
+    if ((spec_sel == 2 /* dflash2 */ || spec_sel == 3 /* dflash2+ngram */) && vision_sel != 0 /* off */) {
+        set_status(hwnd, L"dflash2 cannot be combined with vision: set Vision to Off or Spec to (none)/mtp");
         return;
     }
 
@@ -1898,7 +1898,7 @@ void create_main_controls(HWND hwnd) {
     label(0, L"Vision:", 150, 94);
     combo(IDC_VISION_COMBO, 200, 92, 64, {L"Off", L"GPU", L"CPU"});
     label(0, L"Spec:", 290, 94);
-    combo(IDC_SPEC_COMBO, 330, 92, 90, {L"(none)", L"mtp", L"dflash", L"dflash2", L"dflash2+ngram"});
+    combo(IDC_SPEC_COMBO, 330, 92, 90, {L"(none)", L"mtp", L"dflash2", L"dflash2+ngram"});
     label(0, L"Draft tokens:", 430, 94);
     edit(IDC_DRAFT_TOKENS_EDIT, 528, 92, 50, 22);
     check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 600, 92, true);
@@ -1984,7 +1984,7 @@ void create_main_controls(HWND hwnd) {
         {IDC_GREEDY_CHECK, L"Force temperature 0 (exact argmax). Overrides all sampling settings."},
         {IDC_THINKING_CHECK, L"Enable reasoning/thinking mode. Also sets the temperature/top-p preset."},
         {IDC_VISION_COMBO, L"Vision input: Off, GPU (CUDA encode), or CPU (host-RAM weights, no VRAM)."},
-        {IDC_SPEC_COMBO, L"Speculative decoding backend for faster generation. (none) = off; mtp / dflash / dflash2 (dflash2 needs the dflash2 artifact; defaults to it when the model supports it); dflash2+ngram = dflash2 with n-gram self-speculation on."},
+        {IDC_SPEC_COMBO, L"Speculative decoding backend for faster generation. (none) = off; mtp / dflash2 (dflash2 needs the dflash2 artifact; defaults to it when the model supports it); dflash2+ngram = dflash2 with n-gram self-speculation on."},
         {IDC_DRAFT_TOKENS_EDIT, L"Draft tokens to propose per step (needs a Spec backend)."},
         {IDC_LM_HEAD_DRAFT_CHECK, L"Use the optimized draft head for speculative proposals (faster drafts)."},
         {IDC_SEED_EDIT, L"Fixed sampling seed (reproducible output). Empty = a new random seed per request."},

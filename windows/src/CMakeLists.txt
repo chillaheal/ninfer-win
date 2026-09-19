@@ -26,6 +26,7 @@ add_library(ninfer_core STATIC
   core/linear_attention_state.cpp
   core/layout.cpp
   core/tensor.cpp
+  core/weight_view.cpp
   core/decode_graph.cpp
   runtime/engine/admission_policy.cpp
   runtime/engine/context_cost.cpp
@@ -45,6 +46,30 @@ add_library(ninfer_artifact STATIC
   artifact/typed_binding.cpp)
 ninfer_internal_includes(ninfer_artifact)
 target_link_libraries(ninfer_artifact PUBLIC ninfer_core)
+
+# V3 .ninfer framing (magic NINFER\0\3): JSON-manifest manifest + single-file payload.
+# Namespace ninfer::artifact::v3 (avoids ODR with the v2 artifact:: layer). Consumes
+# core::weight_view and materializes through the same device/host parent parents.
+add_library(ninfer_artifact_v3 STATIC
+  artifact/v3/file_io.cpp
+  artifact/v3/formats.cpp
+  artifact/v3/layouts.cpp
+  artifact/v3/materializer.cpp
+  artifact/v3/reader.cpp
+  artifact/v3/binder.cpp
+  artifact/v3/schema.cpp
+  artifact/v3/views.cpp)
+ninfer_internal_includes(ninfer_artifact_v3)
+target_link_libraries(ninfer_artifact_v3 PUBLIC ninfer_core)
+
+# Standalone .ninfer v3 inspector: dumps the JSON manifest, tensor geometry and object layout.
+# Diagnostic tool, not shipped; run it from dist/ next to its DLLs.
+add_executable(ninfer_v3_probe artifact/v3/probe_main.cpp)
+target_include_directories(ninfer_v3_probe PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_v3_probe PRIVATE ninfer_artifact_v3)
 
 # The warp-specialized SM120 kernel uses setmaxnreg to transfer registers from its
 # producer warpgroup to its consumer warpgroups. Relocatable device code makes ptxas
@@ -366,6 +391,7 @@ add_subdirectory(targets/qwen3_6_35b_a3b)
 target_link_libraries(ninfer_engine
   PRIVATE
     ninfer_artifact
+    ninfer_artifact_v3
     ninfer_core
     ninfer_ops
     ninfer_text
@@ -394,7 +420,7 @@ if(NINFER_BUILD_SERVE)
   target_link_libraries(ninfer_serve
     PUBLIC ninfer_engine Threads::Threads
     # server_tools.cpp drives libcurl directly (media_acquire's PRIVATE link does not
-    # propagate); the target is always defined here — NINFER_BUILD_SERVE and
+    # propagate); the target is always defined here ï¿½ NINFER_BUILD_SERVE and
     # NINFER_BUILD_MEDIA_ACQUIRE share the same APPS-OR-TESTING condition.
     PRIVATE ninfer_media_acquire CUDA::cudart PkgConfig::LIBCURL)
 endif()

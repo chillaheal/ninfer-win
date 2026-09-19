@@ -32,6 +32,13 @@ constexpr Sha256Digest kCommunityTemplateDigest{
     0x77, 0xf4, 0x3b, 0xe7, 0x54, 0xa9, 0x4e, 0x27, 0x25, 0xa5, 0x8c, 0x4e, 0x16, 0xd2, 0xed, 0x67,
 };
 
+// v3 artifact: Qwen3.8-27B NInfer chat_template.jinja (LF-normalized; carries the SPDX/NInfer
+// comment header). Uses the reasoning_effort xhigh/medium/low mechanism -> ReasoningEffort.
+constexpr Sha256Digest kQwen3_8TemplateDigest{
+    0xa4, 0x97, 0xdb, 0x9e, 0x66, 0x39, 0x41, 0xe6, 0xf7, 0xa0, 0x53, 0x07, 0xc2, 0xba, 0xfa, 0x83,
+    0x74, 0xc1, 0x2e, 0x14, 0x2a, 0xd1, 0xfb, 0xea, 0x62, 0x29, 0x88, 0x8d, 0x41, 0xf1, 0xab, 0x16,
+};
+
 constexpr std::string_view kLowReasoningInstructions =
     "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to "
     "the conclusion without unnecessary elaboration.";
@@ -415,6 +422,9 @@ CompiledChatTemplate CompiledChatTemplate::resolve(std::string_view source) {
         return CompiledChatTemplate(ChatTemplateSemantics::ReasoningEffort, hex);
     }
     if (digest == kCommunityTemplateDigest) {
+        return CompiledChatTemplate(ChatTemplateSemantics::ReasoningEffort, hex);
+    }
+    if (digest == kQwen3_8TemplateDigest) {
         return CompiledChatTemplate(ChatTemplateSemantics::ReasoningEffort, hex);
     }
     throw std::invalid_argument("unsupported frontend/chat_template.jinja (sha256 " + hex + ")");

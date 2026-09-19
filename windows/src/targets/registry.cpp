@@ -5,14 +5,20 @@
 #include "artifact/binder.h"
 #include "artifact/materializer.h"
 #include "artifact/reader.h"
+#include "artifact/v3/binder.h"
+#include "artifact/v3/framing.h"
+#include "artifact/v3/materializer.h"
+#include "artifact/v3/reader.h"
 #include "core/device.h"
 #include "runtime/engine/kv_capacity.h"
 #include "runtime/engine/context_cost.h"
 #include "runtime/engine/options_normalize.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -268,6 +274,154 @@ KvProbeResult probe_registered(const EngineOptions& options, DeviceContext& devi
     return result;
 }
 
+// Sniff the entry framing magic (first 8 bytes) to pick the artifact reader version. The v2 Reader
+// constructor throws on a v3 file, so routing must happen before either Reader is built.
+bool is_v3_artifact(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    std::array<std::byte, artifact::v3::kEntryMagic.size()> header{};
+    in.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
+    return static_cast<std::size_t>(in.gcount()) == header.size() &&
+           header == artifact::v3::kEntryMagic;
+}
+
+// The v3 manifest carries no ArtifactIdentity; recover (model_id, weights_id) from metadata so the
+// shared resolve_weights / sampling_defaults / context-cost paths can be reused unchanged.
+artifact::ArtifactIdentity make_v3_identity(const artifact::v3::Reader& reader) {
+    const auto& meta          = reader.directory().metadata;
+    artifact::ArtifactIdentity identity;
+    identity.model_id         = meta.is_object() ? meta.value("name", std::string{}) : std::string{};
+    identity.weights_id       = "nvfp4";
+    return identity;
+}
+
+template <class Target, class Loaded, class Instance>
+ConstructedTarget construct_registered_v3(const EngineOptions& options, DeviceContext& device,
+                                          artifact::v3::Reader& reader, Clock::time_point load_start,
+                                          std::string_view target_key) {
+    const auto identity                          = make_v3_identity(reader);
+    const auto weights_profile                    = Target::resolve_weights(identity);
+    const ModelSamplingDefaults sampling_defaults = Target::sampling_defaults(identity.model_id);
+    const runtime::ContextCostIdentity context_cost_identity{
+        .hardware_class = runtime::context_cost_hardware_class(
+            device.props.name, device.props.major, device.props.minor),
+        .model_id   = identity.model_id,
+        .weights_id = identity.weights_id,
+    };
+    runtime::ResolvedContextMachineCost context_cost = runtime::resolve_context_machine_cost(
+        context_cost_identity, options.context_cost.preset_path);
+
+    artifact::v3::Binder binder(reader);
+    auto load_plan        = Target::plan_load_v3(binder, options, weights_profile);
+    auto sequence_planner = Target::make_sequence_planner(device, options, weights_profile);
+    const runtime::SequenceCapacityCurve curve = sequence_planner.capacity_curve();
+    const std::size_t preflight_runtime_bytes =
+        runtime_bytes_after_planned_weights(load_plan.materialization().device_capacity_bytes);
+    (void)runtime::resolve_kv_capacity(options.kv_capacity, curve, preflight_runtime_bytes);
+
+    auto materialized = artifact::v3::materialize(reader, load_plan.materialization(), device);
+    const artifact::v3::MaterializationStats stats = materialized.stats();
+
+    auto model = Target::construct_loaded_model_v3(std::move(load_plan), std::move(materialized));
+    device.synchronize();
+    runtime::KvCapacityResolution capacity_resolution =
+        runtime::resolve_kv_capacity(options.kv_capacity, curve, current_free_device_bytes());
+    auto sequence_plan = std::move(sequence_planner).finalize(capacity_resolution.main_page_groups);
+    if (sequence_plan.device_reservation_bytes() != capacity_resolution.runtime_reservation_bytes ||
+        sequence_plan.kv_capacity() != capacity_resolution.resolved_tokens) {
+        throw std::logic_error("resolved KV capacity does not match the finalized target plan");
+    }
+    auto loaded   = std::make_unique<Loaded>(std::move(model), options);
+    auto instance = std::make_unique<Instance>(std::move(loaded), capacity_resolution,
+                                               std::move(sequence_plan), device);
+    device.synchronize();
+    instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();
+
+    LoadSummary summary;
+    summary.target               = std::string(target_key);
+    summary.model_id             = identity.model_id;
+    summary.weights_id           = identity.weights_id;
+    summary.load_seconds         = std::chrono::duration<double>(Clock::now() - load_start).count();
+    summary.upload_seconds       = stats.upload_seconds;
+    summary.artifact_bytes_read  = stats.file_bytes;
+    summary.host_to_device_bytes = stats.h2d_bytes;
+    summary.peak_staging_bytes   = stats.peak_staging_bytes;
+    summary.tensor_count         = stats.device_object_count;
+    summary.resource_count       = stats.host_object_count;
+    summary.context_cost         = context_cost.summary;
+    return ConstructedTarget{.active            = ActiveTarget(std::move(instance)),
+                             .load              = std::move(summary),
+                             .sampling_defaults = sampling_defaults,
+                             .context_cost      = std::move(context_cost.model)};
+}
+
+template <class Target>
+KvProbeResult probe_registered_v3(const EngineOptions& options, DeviceContext& device,
+                                  artifact::v3::Reader& reader, std::uint32_t maximum_context) {
+    const EngineOptions normalized = normalize_engine_options(options);
+    const auto identity     = make_v3_identity(reader);
+    const auto weights_profile = Target::resolve_weights(identity);
+
+    artifact::v3::Binder binder(reader);
+    auto load_plan = Target::plan_load_v3(binder, normalized, weights_profile);
+
+    const std::uint64_t weight_bytes     = load_plan.materialization().device_capacity_bytes;
+    const std::size_t free_after_weights =
+        runtime_bytes_after_planned_weights(weight_bytes);
+
+    constexpr std::uint32_t kProbeHeadroomPercent = 3;
+    const std::size_t headroom_bytes              = free_after_weights * kProbeHeadroomPercent / 100;
+    const std::uint64_t budget                    = static_cast<std::uint64_t>(free_after_weights) -
+                                                     static_cast<std::uint64_t>(headroom_bytes);
+
+    auto reservation_for = [&](std::uint32_t max_context) -> std::uint64_t {
+        EngineOptions candidate = normalized;
+        candidate.max_context   = max_context;
+        candidate.kv_capacity   = KvCapacityPolicy::automatic(0);
+        auto planner            = Target::make_sequence_planner(device, candidate, weights_profile);
+        return static_cast<std::uint64_t>(planner.capacity_curve().minimum_device_reservation_bytes);
+    };
+
+    constexpr std::uint32_t kFloorWindow  = 1024;
+    constexpr std::uint32_t kCeilingProbe = 1u << 20;
+    const std::uint32_t ceiling = std::min(kCeilingProbe, maximum_context);
+
+    std::uint32_t fit_tokens = 0;
+    if (reservation_for(kFloorWindow) <= budget) {
+        std::uint32_t lo = kFloorWindow;
+        std::uint32_t hi = kFloorWindow * 2U;
+        while (hi < ceiling && reservation_for(hi) <= budget) {
+            lo = hi;
+            hi *= 2U;
+        }
+        if (hi >= ceiling) {
+            hi = ceiling + 1;
+        }
+        std::uint32_t best = lo;
+        while (lo + 1 < hi) {
+            const std::uint32_t mid = lo + (hi - lo) / 2U;
+            if (reservation_for(mid) <= budget) {
+                best = mid;
+                lo   = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        fit_tokens = best;
+    }
+
+    KvProbeResult result;
+    result.model_id                      = identity.model_id;
+    result.vram_total_bytes              = device.total_vram();
+    result.weights_bytes                 = weight_bytes;
+    result.vram_free_after_weights_bytes = free_after_weights;
+    result.kv_headroom_percent           = kProbeHeadroomPercent;
+    result.kv_fit_tokens                 = fit_tokens;
+    return result;
+}
+
 
 } // namespace
 
@@ -326,6 +480,21 @@ ConstructedTarget construct_target(const EngineOptions& options, DeviceContext& 
     validate_options(options);
     const auto load_start = Clock::now();
 
+    if (is_v3_artifact(options.artifact_path)) {
+        artifact::v3::Reader reader(options.artifact_path);
+        const auto identity = make_v3_identity(reader);
+        if (identity.model_id == Qwen3_6_27B::qwen3_8_model_id) {
+            return construct_registered_v3<Qwen3_6_27B, LoadedQwen3_6_27B, Qwen3_6_27BInstance>(
+                options, device, reader, load_start, Qwen3_6_27B::qwen3_8_target_key);
+        }
+        if (identity.model_id == Qwen3_6_27B::model_id) {
+            return construct_registered_v3<Qwen3_6_27B, LoadedQwen3_6_27B, Qwen3_6_27BInstance>(
+                options, device, reader, load_start, Qwen3_6_27B::target_key);
+        }
+        throw std::runtime_error("v3 artifact identity '" + identity.model_id + "' has no "
+                                 "registered target for this device");
+    }
+
     artifact::Reader reader(options.artifact_path);
     const auto& identity = reader.identity();
     if (identity.model_id == Qwen3_6_27B::model_id) {
@@ -355,6 +524,17 @@ KvProbeResult probe_kv_capacity(const EngineOptions& options) {
     // The probe owns its device context for the call's duration: it only queries VRAM and
     // resolves a capacity curve, so no weights are materialized and no model is built.
     DeviceContext device(options.device);
+    if (is_v3_artifact(options.artifact_path)) {
+        artifact::v3::Reader reader(options.artifact_path);
+        const auto identity = make_v3_identity(reader);
+        if (identity.model_id == Qwen3_6_27B::model_id ||
+            identity.model_id == Qwen3_6_27B::qwen3_8_model_id) {
+            return probe_registered_v3<Qwen3_6_27B>(options, device, reader,
+                                                    qwen3_6_27b::detail::kNativeContext);
+        }
+        throw std::runtime_error("v3 artifact identity '" + identity.model_id + "' has no "
+                                 "registered target for this device");
+    }
     artifact::Reader reader(options.artifact_path);
     const auto& identity = reader.identity();
     if (identity.model_id == Qwen3_6_27B::model_id) {

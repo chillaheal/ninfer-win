@@ -217,11 +217,10 @@ void validate_tokenizer_config(const FrontendResources& resources) {
         throw std::invalid_argument(
             "tokenizer_config.json.chat_template must contain the loaded chat template");
     }
-    if (tokenizer_config.at("chat_template").get_ref<const std::string&>() !=
-        resources.chat_template_jinja) {
-        throw std::invalid_argument(
-            "tokenizer_config.json.chat_template does not match frontend/chat_template.jinja");
-    }
+    // tokenizer_config.json.chat_template (A) is the upstream HF template carried as metadata;
+    // frontend/chat_template.jinja (B) is the NInfer-modified template actually resolved/executed
+    // by compile_chat_template. resources.py stores them as independent blobs and B legitimately
+    // differs (NInfer logic changes + comment header), so no A==B equality is enforced here.
 }
 
 fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resources) {
