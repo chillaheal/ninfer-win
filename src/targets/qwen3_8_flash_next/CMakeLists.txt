@@ -31,3 +31,8 @@ target_sources(ninfer_engine PRIVATE
 target_include_directories(ninfer_engine PRIVATE
   impl
   export)
+# Overlay layout: this target can also be attached to the core ninfer-win tree
+# via add_subdirectory(); expose the flash-next include root and the feature
+# macro so shared core TUs (registry.cpp, engine.cpp) can compile against it.
+target_compile_definitions(ninfer_engine PUBLIC NINFER_WITH_FLASH_NEXT=1)
+target_include_directories(ninfer_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)

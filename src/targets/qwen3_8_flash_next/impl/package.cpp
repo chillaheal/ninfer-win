@@ -104,10 +104,9 @@ Package::Shell Package::plan(const std::filesystem::path& artifact_path,
     request.expert_host_bytes    = binder.host_expert_bytes;
     request.ple_bytes            = binder.ple.bytes();
     request.kv_bytes_per_token   = kv_bytes_per_token(options.kv_cache);
-    // Indexer-K pool per-token footprint: 512-dim key (1 B/elem FP8 or 2 B/elem BF16)
-    // + one 2 B half scale per token (the scale plane is allocated for both dtypes).
-    request.indexer_kv_bytes_per_token =
-        (options.indexer_kv_dtype == "bf16") ? 512u * 2u + 2u : 512u + 2u;
+    // Indexer-K pool per-token footprint: 512-dim key at 1 B/elem FP8 + one
+    // 2 B half scale per token (the scale plane is allocated for both dtypes).
+    request.indexer_kv_bytes_per_token = 512u + 2u;
     request.max_context          = options.max_context;
     request.max_concurrency      = options.max_concurrency;
     request.expert_window_bytes  = expert_window_bytes;
