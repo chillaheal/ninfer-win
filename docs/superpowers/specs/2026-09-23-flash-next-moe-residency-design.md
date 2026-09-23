@@ -57,7 +57,7 @@ So the architecture the user described is already present. The gaps:
 
 `moe_expert_h2d` = 86.65% of GPU-busy / 86.51% of wall. The scatter is re-done
 per layer AND per round; the only reusable residency is per-layer across
-rounds. The only reusable residency is per-layer across rounds. The pageable
+rounds. The pageable page faults are on the critical path (0.92 ms/expert);
 page faults are on the critical path (0.92 ms/expert); pinned is ~105
 µs/expert (~26 GB/s warm), ~4× faster.
 
@@ -85,7 +85,7 @@ dn_scales at kPlaneGuCodes/GuScales/DnCodes/DnScales). `kExpertBytes` =
 1. **Decode mode (T=1): M4 + M2 as the decode default.** When T==1 and the
    union fits the GPU LRU, use M4 (GPU LRU) with M2 pinned as the miss fast-
    path. This makes decode H2D-free (hits = in-place read; misses = one
-  2.76 MB pinned→device DMA at ~26 GB/s ≈ 105 µs).
+   2.76 MB pinned→device DMA at ~26 GB/s ≈ 105 µs).
 2. **Prefill (T>1, churning):** keep the M4 LRU but skip the pinned miss-path
    when the union exceeds the pinned pool (a pinned miss at disk rate is
    slower than the driver's async pageable staging). Use the pageable

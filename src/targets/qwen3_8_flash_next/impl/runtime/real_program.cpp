@@ -464,9 +464,17 @@ std::size_t expert_gpu_slot_count() {
     const unsigned long v = std::strtoul(env, nullptr, 10);
     return static_cast<std::size_t>(v);  // "0" -> OFF; "N" -> exactly N.
   }
-  // Dynamic: leftover VRAM minus a 2 GiB headroom, in whole expert-blob units,
+  // Dynamic: leftover VRAM minus a 512 MiB headroom, in whole expert-blob units,
   // capped at the full (layer, expert) set.
-  constexpr std::size_t kExpertGpuVramHeadroom = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+  //
+  // The headroom was 2 GiB. That left a 32 GB card with ~1.9 GiB free (a 30 GB
+  // model in a 32 GB card) a 0-slot pool: (free - 2 GiB) < 0 -> 0 slots, which
+  // silently disabled the tier-1 GPU LRU and left every round on the 0.92 GB/s
+  // pageable mmap (P13: moe_expert_h2d = 86.51% of wall). Dropping it to 512 MiB
+  // gives a ~1.9 GiB-free card a ~530-slot pool that comfortably holds the 480-blob
+  // decode working set (kNumLayers x kExpertsPerToken = 480 blobs = 1.33 GiB), so
+  // steady-state decode reads resident experts in place (zero DMA).
+  constexpr std::size_t kExpertGpuVramHeadroom = 512ULL * 1024ULL * 1024ULL;
   std::size_t free_bytes = 0;
   std::size_t total_bytes = 0;
   if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess) {
@@ -1515,6 +1523,16 @@ void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
 
   const RoutedHostBases& routed = view_.routed_host[layer];
   __nv_bfloat16* window = static_cast<__nv_bfloat16*>(moe_window_.p);
+  // P14: the pinned (RAM) tier is only worth it where routing is stable. During
+  // a prefill round the router GEMM tiling changes FMA ordering with T, so the
+  // per-round top-10 membership churns ~65% and a pinned LRU chases a moving
+  // target: a synchronous pinned miss (~700 soft page faults/expert, ~2.4-2.7 ms)
+  // is SLOWER than the driver's async pageable staging (0.92 ms/expert). Decode
+  // (T==1, incremental) routes stably and retains ~95%+ of the ~480-key union, so
+  // a pinned hit (~26 GB/s) wins there. pin_ok = the pinned tier is enabled AND
+  // this is a decode round (T==1); prefill (T>1) always uses the pageable 4-plane
+  // scatter (the driver's async staging beats a synchronous pinned miss).
+  const bool pin_ok = expert_lru_.enabled() && T == 1;
   // M4 tier-1: route every selected expert through the GPU LRU when it fits
   // (distinct count <= slot count). Otherwise fall through to the pinned/legacy
   // window scatter and steer the op at the window (w.expert_ptrs = null).
@@ -1554,7 +1572,7 @@ void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
         // pinned blob is laid out at the kPlane* offsets (identical slot layout),
         // so promote_contiguous copies it verbatim into the GPU slot.
         const std::uint8_t* pin =
-            (expert_lru_.enabled()) ? expert_lru_.find(layer, e) : nullptr;
+            pin_ok ? expert_lru_.find(layer, e) : nullptr;
         if (pin != nullptr) {
           slot = expert_gpu_lru_.promote_contiguous(layer, e, pin, s);
         } else {
@@ -1658,9 +1676,18 @@ void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
         }
       }
     }
-  } else if (expert_lru_.enabled()) {
-    // M2 loop-4: hybrid scatter. Hit = ONE contiguous 2,764,800 B pinned->device
-    // DMA (no page faults, ~26 GB/s measured warm). Miss = the M1 4-plane
+  } else if (expert_lru_.enabled() && T == 1) {
+    // P13 M2 loop-4 (hybrid scatter), P14: decode (T==1) only. At T==1 the router
+    // routing is stable, so the pinned LRU retains ~95%+ of the ~480-key union and
+    // a pinned HIT is one contiguous pinned->device DMA (no page faults, ~26 GB/s
+    // measured warm). During a prefill round (T>1) the router GEMM tiling changes
+    // FMA ordering with T, the top-10 membership churns ~65% per round, and a
+    // pinned MISS pays ~700 soft page faults/expert (~2.4-2.7 ms) that the
+    // driver's async pageable staging never puts on the critical path (0.92
+    // ms/expert) — so a pinned LRU chasing a moving prefill target LOSES to the
+    // async pageable path. Gate to T==1 so prefill always takes the async
+    // pageable path and only decode (stable routing) uses the pinned fast path.
+    // Hit = ONE contiguous 2,764,800 B pinned->device DMA. Miss = the M1 4-plane
     // pageable DMAs (the driver's staging faults the mmap pages in at the M1
     // rate) followed by the pinned promotion — POST-staging, so the promotion
     // memcpys read pages the staging just made resident (RAM speed) instead of
