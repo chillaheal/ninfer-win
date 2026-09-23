@@ -16,6 +16,11 @@ namespace {
 
 using Json = nlohmann::json;
 
+constexpr std::string_view kFunctionOpen  = "<function=";
+constexpr std::string_view kFunctionClose = "</function>";
+constexpr std::string_view kToolOpen      = "<tool_call>";
+constexpr std::string_view kToolClose     = "</tool_call>";
+
 std::string trim_ascii(std::string_view text) {
     std::size_t begin = 0;
     while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
@@ -189,47 +194,67 @@ bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args,
             args[key] = value;
         } else {
             Json parsed = Json::parse(value, nullptr, false);
-            if (parsed.is_discarded()) { return false; }
-            args[key] = std::move(parsed);
+            // A JSON-typed value that does not parse stays a raw string instead of
+            // invalidating the whole call.
+            args[key] = parsed.is_discarded() ? Json(value) : std::move(parsed);
         }
     }
     pos = value_end + kParamClose.size();
     return true;
 }
 
-bool parse_one_tool_call(std::string_view block, std::size_t max_name_length,
-                         const ToolArgumentTypeContracts& contracts, ToolCall& out) {
-    constexpr std::string_view kFunctionOpen  = "<function=";
-    constexpr std::string_view kFunctionClose = "</function>";
-    std::size_t pos                           = 0;
-    skip_ws(block, pos);
-    if (!starts_with_at(block, pos, kFunctionOpen)) { return false; }
-    const std::size_t name_begin = pos + kFunctionOpen.size();
-    const std::size_t name_end   = block.find('>', name_begin);
-    if (name_end == std::string_view::npos || name_end == name_begin) { return false; }
-    const std::string name = std::string(block.substr(name_begin, name_end - name_begin));
-    if (!valid_function_name(name, max_name_length)) { return false; }
-    pos = name_end + 1;
+bool name_allowed(std::string_view name, const ToolArgumentTypeContracts& contracts) {
+    if (contracts.tools.empty()) { return true; }
+    return std::any_of(contracts.tools.begin(), contracts.tools.end(),
+                       [&](const auto& tool) { return tool.name == name; });
+}
 
-    const std::size_t function_end = block.find(kFunctionClose, pos);
+bool parse_function_span(std::string_view region, std::size_t open,
+                         std::size_t max_name_length,
+                         const ToolArgumentTypeContracts& contracts, ToolCall& out,
+                         std::size_t& end) {
+    const std::size_t name_begin = open + kFunctionOpen.size();
+    const std::size_t name_end   = region.find('>', name_begin);
+    if (name_end == std::string_view::npos || name_end == name_begin) { return false; }
+    const std::string name = std::string(region.substr(name_begin, name_end - name_begin));
+    if (!valid_function_name(name, max_name_length)) { return false; }
+    if (!name_allowed(name, contracts)) { return false; }
+
+    const std::size_t function_end = region.find(kFunctionClose, name_end + 1);
     if (function_end == std::string_view::npos) { return false; }
-    const std::string_view params = block.substr(pos, function_end - pos);
-    Json args                     = Json::object();
-    std::size_t param_pos         = 0;
+    const std::size_t params_begin = name_end + 1;
+    const std::string_view params  = region.substr(params_begin, function_end - params_begin);
+    Json args                      = Json::object();
+    std::size_t param_pos          = 0;
     for (;;) {
         skip_ws(params, param_pos);
         if (param_pos >= params.size()) { break; }
         if (!parse_parameter(params, param_pos, args, name, contracts)) { return false; }
     }
 
-    pos = function_end + kFunctionClose.size();
-    skip_ws(block, pos);
-    if (pos != block.size()) { return false; }
-
     out.id             = new_tool_call_id();
     out.name           = name;
     out.arguments_json = args.dump();
+    end                = function_end + kFunctionClose.size();
     return true;
+}
+
+void parse_function_region(std::string_view region, std::size_t max_name_length,
+                           const ToolArgumentTypeContracts& contracts,
+                           std::vector<ToolCall>& calls) {
+    std::size_t search = 0;
+    while (search < region.size()) {
+        const std::size_t open = region.find(kFunctionOpen, search);
+        if (open == std::string_view::npos) { break; }
+        ToolCall call;
+        std::size_t end = 0;
+        if (parse_function_span(region, open, max_name_length, contracts, call, end)) {
+            calls.push_back(std::move(call));
+            search = end;
+        } else {
+            search = open + kFunctionOpen.size();
+        }
+    }
 }
 
 ParsedToolCallOutput fallback(const std::string& text) {
@@ -260,36 +285,32 @@ ToolArgumentTypeContracts build_tool_argument_type_contracts(const GenerationReq
 ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
                                                  std::size_t max_tool_name_length,
                                                  const ToolArgumentTypeContracts& contracts) {
-    constexpr std::string_view kToolOpen  = "<tool_call>";
-    constexpr std::string_view kToolClose = "</tool_call>";
-
     const std::size_t first = text.find(kToolOpen);
-    if (first == std::string::npos) { return fallback(text); }
 
     ParsedToolCallOutput out;
-    out.content = rtrim_ascii(std::string_view(text).substr(0, first));
-
-    std::size_t pos = first;
-    while (pos < text.size()) {
-        skip_ws(text, pos);
-        if (pos >= text.size()) { break; }
-        // Only reachable once at least one call was already pushed: a stray token after the
-        // last complete marker must not discard the good prefix (keep the parsed calls).
-        if (!starts_with_at(text, pos, kToolOpen)) { break; }
-        const std::size_t inner_begin = pos + kToolOpen.size();
-        const std::size_t close       = text.find(kToolClose, inner_begin);
-        if (close == std::string::npos) {
-            if (out.tool_calls.empty()) { return fallback(text); }
-            break;
+    if (first != std::string::npos) {
+        out.content = rtrim_ascii(std::string_view(text).substr(0, first));
+        std::size_t pos = first;
+        while (pos < text.size()) {
+            skip_ws(text, pos);
+            if (pos >= text.size()) { break; }
+            if (!starts_with_at(text, pos, kToolOpen)) { break; }
+            const std::size_t inner_begin = pos + kToolOpen.size();
+            const std::size_t close       = text.find(kToolClose, inner_begin);
+            const std::size_t inner_end   = (close == std::string::npos) ? text.size() : close;
+            parse_function_region(std::string_view(text).substr(inner_begin, inner_end - inner_begin),
+                                  max_tool_name_length, contracts, out.tool_calls);
+            if (close == std::string::npos) { break; }
+            pos = close + kToolClose.size();
         }
-        ToolCall call;
-        if (!parse_one_tool_call(std::string_view(text).substr(inner_begin, close - inner_begin),
-                                 max_tool_name_length, contracts, call)) {
-            if (out.tool_calls.empty()) { return fallback(text); }
-            break;
+    } else {
+        // Unwrapped recovery: a bare function emission at the very start of the text
+        // (after leading whitespace, no tool wrapper) is still a tool response.
+        std::size_t lead = 0;
+        skip_ws(text, lead);
+        if (starts_with_at(text, lead, kFunctionOpen)) {
+            parse_function_region(text, max_tool_name_length, contracts, out.tool_calls);
         }
-        out.tool_calls.push_back(std::move(call));
-        pos = close + kToolClose.size();
     }
 
     if (out.tool_calls.empty()) { return fallback(text); }

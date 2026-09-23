@@ -3,6 +3,21 @@
 All changes to the Windows port (`windows/` tree). Semver:
 patch = bugfix, minor = new feature, major = breaking change.
 
+## v1.0.4 (2026-09-23)
+
+- Serve: tool-call parser hardened. A tool_call block now parses ALL of its
+  `<function=...>` blocks (previously only the first, and a malformed block
+  discarded the good prefix); a malformed block is skipped, keeping the good
+  ones. A non-JSON value for a JSON-typed parameter is kept as a raw string
+  instead of failing the whole call. A bare leading `<function=...>` with no
+  `<tool_call>` wrapper is recovered as a tool call, and an unknown tool name
+  falls back to plain text.
+- GUI: the draft-tokens field is now locked to 7 and disabled when the dflash2
+  spec backend is selected (dflash2 block_size 8 -> n_max 7; a larger K is a
+  measured loss). mtp / none leave the field editable and clamp to [1,5].
+- Tests: new tool-call parser cases (bad-then-valid block, unwrapped leading
+  function, non-JSON JSON-typed param, unknown tool name, mid-prose function).
+
 ## v1.0.2 (2026-09-19)
 
 - v3 artifact format: full v3 artifact support (`NINFER\0\0\x03` magic) —

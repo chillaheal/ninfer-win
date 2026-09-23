@@ -89,18 +89,14 @@ int test_malformed_falls_back_to_text() {
     return failures;
 }
 
-int test_suffix_after_tool_falls_back_to_text() {
-    const std::string text = "<tool_call>\n"
-                             "<function=get_weather>\n"
-                             "<parameter=city>\nParis\n</parameter>\n"
-                             "</function>\n"
-                             "</tool_call>\n"
-                             "extra answer";
-    const ninfer::serve::ParsedToolCallOutput parsed =
-        ninfer::serve::parse_qwen_tool_call_output(text, 64, kNoTypeContracts);
+int test_trailing_prose_after_complete_tool_is_dropped() {
+    const std::string text = "<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\nextra answer";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, kNoTypeContracts);
     int failures = 0;
-    failures += check(!parsed.is_tool_call_response, "non-whitespace suffix falls back to text");
-    failures += check(parsed.content == text, "suffix fallback preserves text");
+    failures += check(parsed.is_tool_call_response, "complete tool call kept despite trailing prose");
+    failures += check(parsed.tool_calls.size() == 1 && parsed.tool_calls[0].name == "get_weather",
+                      "trailing prose did not discard the good call");
+    failures += check(parsed.content.empty(), "no content prefix before the first tool block");
     return failures;
 }
 
@@ -248,13 +244,13 @@ int test_declared_type_mismatches_are_forwarded_without_coercion() {
     failures += check(args.at("null_as_boolean").is_null(),
                       "null JSON was coerced to the declared boolean type");
 
-    const std::string invalid =
-        "<tool_call>\n<function=configure>\n<parameter=python_boolean>\nTrue\n</parameter>\n"
-        "</function>\n</tool_call>";
-    const auto rejected = ninfer::serve::parse_qwen_tool_call_output(invalid, 64, contracts);
-    failures += check(!rejected.is_tool_call_response && rejected.content == invalid &&
-                          rejected.tool_calls.empty(),
-                      "non-JSON value for a declared non-string parameter did not fall back");
+    const std::string invalid = "<tool_call>\n<function=configure>\n<parameter=python_boolean>\nTrue\n</parameter>\n</function>\n</tool_call>";
+    const auto kept = ninfer::serve::parse_qwen_tool_call_output(invalid, 64, contracts);
+    const Json kept_args = Json::parse(kept.tool_calls.at(0).arguments_json);
+    failures += check(kept.is_tool_call_response && kept.tool_calls.size() == 1 &&
+                          kept_args.at("python_boolean").is_string() &&
+                          kept_args.at("python_boolean") == "True",
+                      "non-JSON value for a declared non-string parameter was kept as a raw string");
     return failures;
 }
 
@@ -323,6 +319,64 @@ int test_incremental_filter_fallback() {
     return failures;
 }
 
+int test_bad_block_then_valid_block() {
+    const std::string text = "<tool_call>\n<function=broken>\n</tool_call>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, kNoTypeContracts);
+    int failures = 0;
+    failures += check(parsed.is_tool_call_response, "bad block skipped, response still a tool response");
+    failures += check(parsed.tool_calls.size() == 1, "only the valid block produced a call");
+    failures += check(parsed.tool_calls[0].name == "get_weather", "valid block name kept");
+    const Json args = Json::parse(parsed.tool_calls[0].arguments_json);
+    failures += check(args.at("city") == "Paris", "valid block parameter kept");
+    return failures;
+}
+
+int test_unwrapped_leading_function_recovered() {
+    const std::string text = "  \n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, kNoTypeContracts);
+    int failures = 0;
+    failures += check(parsed.is_tool_call_response, "unwrapped leading function recovered");
+    failures += check(parsed.tool_calls.size() == 1, "one recovered call");
+    failures += check(parsed.tool_calls[0].name == "get_weather", "recovered call name");
+    const Json args = Json::parse(parsed.tool_calls[0].arguments_json);
+    failures += check(args.at("city") == "Paris", "recovered call parameter");
+    return failures;
+}
+
+int test_json_param_non_json_value_stays_raw() {
+    const auto contracts = contracts_for("configure", Json{{"payload", Json{{"type", "object"}}}});
+    const std::string text = "<tool_call>\n<function=configure>\n<parameter=payload>\nnot json at all\n</parameter>\n</function>\n</tool_call>";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, contracts);
+    int failures = 0;
+    failures += check(parsed.is_tool_call_response, "call valid despite non-JSON JSON-typed param");
+    failures += check(parsed.tool_calls.size() == 1, "one call");
+    const Json args = Json::parse(parsed.tool_calls[0].arguments_json);
+    failures += check(args.at("payload").is_string() && args.at("payload") == "not json at all",
+                      "non-JSON value for JSON-typed param kept as raw string");
+    return failures;
+}
+
+int test_disallowed_tool_name_falls_back() {
+    const auto contracts = contracts_for("get_weather", Json{{"city", Json{{"type", "string"}}}});
+    const std::string text = "<tool_call>\n<function=evil_tool>\n<parameter=x>\n1\n</parameter>\n</function>\n</tool_call>";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, contracts);
+    int failures = 0;
+    failures += check(!parsed.is_tool_call_response, "disallowed tool name not a tool response");
+    failures += check(parsed.content == text, "disallowed tool name preserved as text");
+    failures += check(parsed.tool_calls.empty(), "disallowed tool name has no calls");
+    return failures;
+}
+
+int test_mid_prose_function_not_tool_call() {
+    const std::string text = "Here is a hint:\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>";
+    const auto parsed = ninfer::serve::parse_qwen_tool_call_output(text, 64, kNoTypeContracts);
+    int failures = 0;
+    failures += check(!parsed.is_tool_call_response, "mid-prose function not treated as a tool call");
+    failures += check(parsed.content == text, "mid-prose function preserved as text");
+    failures += check(parsed.tool_calls.empty(), "mid-prose function has no calls");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -330,7 +384,7 @@ int main() {
     failures += test_single_call();
     failures += test_multiple_calls_and_json_values();
     failures += test_malformed_falls_back_to_text();
-    failures += test_suffix_after_tool_falls_back_to_text();
+    failures += test_trailing_prose_after_complete_tool_is_dropped();
     failures += test_configured_name_limit();
     failures += test_declared_strings_are_not_json_sniffed();
     failures += test_declared_non_string_values_are_json_decoded();
@@ -338,6 +392,11 @@ int main() {
     failures += test_unknown_schema_keeps_legacy_inference();
     failures += test_incremental_filter_valid_tool();
     failures += test_incremental_filter_fallback();
+    failures += test_bad_block_then_valid_block();
+    failures += test_unwrapped_leading_function_recovered();
+    failures += test_json_param_non_json_value_stays_raw();
+    failures += test_disallowed_tool_name_falls_back();
+    failures += test_mid_prose_function_not_tool_call();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }

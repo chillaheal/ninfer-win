@@ -371,6 +371,8 @@ bool write_text_file_atomic(const std::wstring& path, const std::string& bytes) 
 // set, so each remembered key overwrites the default; a missing/unusable file
 // leaves the defaults untouched (today's behavior). Unknown keys and out-of-
 // range combo indices are skipped (forward-compatible).
+void apply_spec_draft_lock(HWND hwnd, int spec_idx);
+
 void apply_saved_settings(HWND hwnd) {
     const std::optional<std::string> raw = read_text_file(settings_path());
     if (!raw || raw->empty()) { return; }
@@ -429,6 +431,9 @@ void apply_saved_settings(HWND hwnd) {
     // A saved model path that no longer exists is still prefilled, but the
     // serve launch would fail obscurely — surface it in the status bar.
     if (!restored_any) { return; }
+    // A restored dflash2 spec re-locks the draft field at 7 (matches the model default).
+    apply_spec_draft_lock(
+        hwnd, static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0)));
     const std::wstring model = get_control_text(GetDlgItem(hwnd, IDC_MODEL_EDIT));
     if (!model.empty() && ::GetFileAttributesW(model.c_str()) == INVALID_FILE_ATTRIBUTES) {
         set_status(hwnd, L"Model file not found: " + model);
@@ -503,6 +508,23 @@ void apply_sampling_preset(HWND hwnd, bool thinking) {
     ::SetWindowTextW(GetDlgItem(hwnd, IDC_FREQUENCY_PENALTY_EDIT), L"0.0");
 }
 
+// dflash2 always proposes exactly 7 draft tokens (its block_size=8 yields n_max=7; a
+// larger K is a measured loss). When a dflash2 backend is selected the draft-tokens
+// field is forced to 7 and disabled so it cannot drift out of range; mtp / (none)
+// leave the field user-editable.
+void apply_spec_draft_lock(HWND hwnd, int spec_idx) {
+    HWND draft = GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT);
+    const bool locked = (spec_idx == 2 || spec_idx == 3);
+    ::EnableWindow(draft, !locked);
+    if (locked) {
+        ::SetWindowTextW(draft, L"7");
+    } else {
+        const std::wstring text = get_control_text(draft);
+        const std::uint64_t value = parse_wide_u64(strip_wide_spaces(text));
+        if (value < 1 || value > 5) { ::SetWindowTextW(draft, L"5"); }
+    }
+}
+
 // Per-model sizing defaults (2026-09-12, updated 2026-09-13): when a browsed model is a
 // dflash2 artifact, pin its serve-ready defaults - the dflash2 spec backend, an fp8 KV
 // cache, the 262k window, and 7 draft tokens. Every other model keeps the Qwen3.8-27B
@@ -515,12 +537,13 @@ void apply_model_sizing_defaults(HWND hwnd, const std::wstring& model) {
         ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 2, 0);    // dflash2
         ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
         ::SetWindowTextW(GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"262144");
-        ::SetWindowTextW(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"7");
+        apply_spec_draft_lock(hwnd, 2);
     } else {
         // Every other model keeps the Qwen3.8-27B defaults already seeded at
         // startup (mtp spec, fp8 KV).
         ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 1, 0);    // mtp
         ::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 3, 0);  // fp8
+        apply_spec_draft_lock(hwnd, 1);
     }
 }
 
@@ -2040,6 +2063,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const int id = LOWORD(wParam);
             const auto* info = reinterpret_cast<const EditorInfo*>(
                 ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            if (id == IDC_SPEC_COMBO && HIWORD(wParam) == CBN_SELCHANGE) {
+                const int spec_idx = static_cast<int>(
+                    ::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+                apply_spec_draft_lock(hwnd, spec_idx);
+                return 0;
+            }
             if (id == IDC_MODEL_BROWSE) {
                 // Open the dialog where the current model path lives (the
                 // prefilled/selected artifact), else next to <exe>\..\models
