@@ -54,6 +54,15 @@ DeviceContext::DeviceContext(int device_id) : device(device_id) {
 
     bind_to_current_thread();
 
+    // cudaDeviceScheduleAuto spin-waits in every synchronize when the host has more cores
+    // than GPUs, keeping this thread at 100% of a core for as long as the GPU is busy.
+    err = cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+    if (err != cudaSuccess) {
+        (void)cudaGetLastError(); // don't leak this into later launch checks
+        std::fprintf(stderr, "warning: %s; keeping default CUDA sync schedule\n",
+                     cuda_error_message("cudaSetDeviceFlags failed", err).c_str());
+    }
+
     err = cudaGetDeviceProperties(&props, device_id);
     if (err != cudaSuccess) {
         throw std::runtime_error(cuda_error_message("cudaGetDeviceProperties failed", err));
@@ -119,7 +128,13 @@ void DeviceContext::bind_to_current_thread_noexcept() const noexcept {
     log_cuda_error("cudaSetDevice", cudaSetDevice(device));
 }
 
-int DeviceContext::sm() const noexcept { return props.major * 10 + props.minor; }
+int DeviceContext::compute_capability() const noexcept { return props.major * 10 + props.minor; }
+
+int DeviceContext::multiprocessor_count() const noexcept { return props.multiProcessorCount; }
+
+DeviceExecutionView DeviceContext::execution_view() const noexcept {
+    return {.stream = stream, .multiprocessor_count = multiprocessor_count()};
+}
 
 std::size_t DeviceContext::total_vram() const noexcept { return props.totalGlobalMem; }
 

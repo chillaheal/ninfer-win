@@ -15,7 +15,7 @@
 namespace ninfer::serve {
 namespace {
 
-using Json = nlohmann::json;
+using Json = RequestJson;
 
 void require_object(const Json& value, std::string_view name = "request body") {
     if (!value.is_object()) { bad_request(std::string(name) + " must be a JSON object"); }
@@ -984,12 +984,7 @@ void parse_preserve_thinking(const Json& body, OpenAIResponsesPromptRequest& out
     if (!kwargs.is_object()) {
         bad_request("chat_template_kwargs must be an object", "chat_template_kwargs");
     }
-    for (auto iterator = kwargs.begin(); iterator != kwargs.end(); ++iterator) {
-        if (iterator.key() != "preserve_thinking" && !iterator.value().is_null()) {
-            bad_request("chat_template_kwargs." + iterator.key() + " is not supported",
-                        "chat_template_kwargs", "chat_template_option_not_supported");
-        }
-    }
+    out.generation.chat_template_kwargs_json = kwargs.dump();
     if (!kwargs.contains("preserve_thinking") || kwargs.at("preserve_thinking").is_null()) {
         return;
     }
@@ -1056,7 +1051,7 @@ ParsedPromptFields parse_prompt_fields(const Json& body, const RequestLimits& li
     return out;
 }
 
-void validate_metadata(const Json& body, Json& metadata) {
+void validate_metadata(const Json& body, nlohmann::json& metadata) {
     if (!body.contains("metadata") || body.at("metadata").is_null()) { return; }
     if (!body.at("metadata").is_object()) { bad_request("metadata must be an object", "metadata"); }
     if (body.at("metadata").size() > 16) {

@@ -55,7 +55,7 @@ KV Store 可以在任意 token frontier 表示、truncate 或保护 prefix；这
 
 ### 3.1 Pool set
 
-Exact target 和 selected speculative backend 在启动时确定 pool set：
+模型配置和 selected speculative backend 在启动时确定 pool set：
 
 ```text
 ordinary:
@@ -65,24 +65,28 @@ MTP:
     Main Text
     MTP
 
-DFlash:
+DFlash / DFlash2:
     Main Text
-    DFlash Full
+    Draft Full, when the selected draft config contains full-attention layers
 ```
 
-MTP 与 DFlash 在一个 Engine 内互斥，因此当前最多有两个 growing pools。
+Speculative backends 在一个 Engine 内互斥，因此当前最多有两个 growing pools。官方 DFlash2
+配置的五层全部是 local attention，只需要 Main growing pool，其 draft context 使用 cyclic storage。
 
 | Pool | 内容 | 逻辑 frontier |
 |---|---|---|
 | Main Text | target full-attention K/V 与其 code/scale planes | target materialized KV frontier |
 | MTP | MTP persistent K/V 与其 code/scale planes | MTP KV frontier |
-| DFlash Full | DFlash persistent full-context K/V | DFlash context frontier |
+| Draft Full | selected draft 的 full-context K/V | draft context frontier |
 
-Main Text 与 MTP 使用 Engine 选择的 BF16、INT8-G64 或 FP8-E4M3FN-row256 KV profile；DFlash Full
-使用自己的 BF16 layout。
+Main Text 与 MTP 使用 Engine 选择的 BF16、INT8-G64、FP8-E4M3FN-row256、NVFP4-G16 或 K8V4
+KV profile；Draft Full 使用自己的 BF16 profile。`BFloat16` 名称下的物理 layout 为 BF16 K、FP16 V，
+写入端将 BF16 V 一次转换为 FP16。K8V4 是封闭的非对称 profile，不是运行时 bit-width 组合：K 固定为
+FP8-E4M3FN-row256，V 固定为 NVFP4-G16。
 
-Common pool implementation 只接收 `KVPageGeometry`、plane inventory 和 capacity。Target/runtime 负责把
-plane ordinal 解释成 layer、K/V、code 或 scale。
+`PagedKVStorageLayout` 将选定的 closed profile 解析为 K/V data/scale plane schema；target planner 按
+layer 展开该 schema 并确定 plane ordinal。Common pool implementation 仍只接收已展开的
+`KVPageGeometry`、plane inventory 和 capacity，不解释 storage mode。
 
 ### 3.2 Main capacity
 
@@ -118,7 +122,7 @@ M=\left\lceil K_{main}/P\right\rceil
 ### 3.3 Automatic capacity
 
 Automatic policy 在权重加载后，以当前可用显存 \(F\) 和要求保留的 headroom \(R\) 解析一次 \(M\)。
-Exact target 提供 affine `SequenceCapacityCurve`：
+模型 planner 根据已绑定参数和选定执行域提供 affine `SequenceCapacityCurve`：
 
 \[
 B(M)=B_{min}+(M-M_{min})B_{step}
@@ -164,13 +168,14 @@ MTP with draft window K:
     Main physical pages = M
     MTP physical pages  = M + C * ceil((K - 1) / P)
 
-DFlash:
+DFlash / DFlash2 with full-attention layers:
     Main physical pages        = M
-    DFlash Full physical pages = M
+    Draft Full physical pages = M
 ```
 
 MTP 的额外 pages 只覆盖每条 active row 在一个 speculative round 中相对 Main 的 provisional lead，
-不扩大任一 address space 的 logical capacity。DFlash Full 没有这种 provisional lead。
+不扩大任一 address space 的 logical capacity。Draft Full 没有这种 provisional lead；没有 full layer
+的 draft 配置不分配此 pool。
 
 各 pools 物理分离。一个 pool 的 free page 不能变成另一 pool 的 payload。Program 在启动时一次性建立
 完整 typed capacity vector，运行期不扩容或重分 pool geometry。
@@ -238,6 +243,7 @@ DFlash Full 使用 head-major page run：
 - \(X=D\) 表示 K/V 或 quantized code plane；
 - INT8-G64 scale plane 使用 \(X=D/64\)；
 - FP8-E4M3FN-row256 scale plane 使用 \(X=1\)；
+- NVFP4-G16 code plane 使用 packed U8 \(X=D/2\)，scale plane 使用 U8 \(X=D/16\)；
 - \(H\) 是 KV heads；
 - \(N_{physical}\) 是该 pool 的 physical page count。
 
@@ -260,8 +266,23 @@ address=base+d\,nb_0+o\,nb_1+g\,nb_2+h\,nb_3
 \]
 
 Code 与 scale planes 使用同一个 \(g\)，但使用各自 Tensor 的 leading coordinate 和 strides。
-Exact persistent codec 由对应 target model 与 consuming Op 定义；allocator 只解释 plane bytes、order
-和 page-group identity。
+Exact persistent codec 由 [`kv_cache_append.h`](../../include/ninfer/ops/kv_cache_append.h) 定义，
+consumer arithmetic 由 [`softmax_attention.h`](../../include/ninfer/ops/softmax_attention.h) 定义；
+allocator 只解释 plane bytes、order 和 page-group identity。
+
+D256 Main/MTP profile 的单 token/head 物理 payload 为：
+
+| profile | K code + scale | V code + scale | K+V |
+|---|---:|---:|---:|
+| BF16 | 512 B | 512 B | 1024 B |
+| INT8-G64 | 256 B + 8 B | 256 B + 8 B | 528 B |
+| FP8-E4M3FN-row256 | 256 B + 2 B | 256 B + 2 B | 516 B |
+| NVFP4-G16 | 128 B + 16 B | 128 B + 16 B | 288 B |
+| K8V4 | 256 B + 2 B | 128 B + 16 B | 402 B |
+
+K/V 的 code 和 scale planes 具有各自的 dtype、leading extent 和 group size；它们仍共享 page-group
+identity、frontier 和 lifetime。Capacity curve、Device/Host replica、continuation transfer 和 memory
+summary 均从这一 typed plane inventory 计算，不能用 `2 * vector_bytes` 代替 K8V4 的非对称字节数。
 
 ### 4.4 Logical position domain
 
@@ -473,6 +494,14 @@ ResourceManager 选择 logical target，Program 根据真实 references 决定 M
 在一个 GPU unit launch 前，target schedule 给出每个 pool 本次可能写到的最大 logical position。
 KV Store 从该 active address space 的 reservation materialize 全部必需 pages，并发布 table slice。
 
+`ensure_mapped_to_tokens()` 的参数是本阶段所需覆盖范围的下界。已有 membership 足够时直接返回，
+包括 membership 大于所需范围的情况；只有所需页数超过 entitlement 才失败。该操作不推进 committed
+frontier、不裁剪已有 mappings，也不改变 entitlement。新增页只把当前 address 的 reservation 转成
+allocation；缩短范围只能由显式 truncate 完成。
+
+各阶段只保障自己会写入的 pool：target prefill/verify 负责 Main KV；draft context append 只保障
+DFlash Full backend KV。DFlash2 的 draft context 全部写入固定 cyclic state，不需要 paged KV 物化。
+
 Unit 成功后，Program 才推进 corresponding committed frontiers。部分 layers 已写但 unit 没有形成合法
 commit 时，新 frontier 不可见。
 
@@ -493,6 +522,10 @@ NeededPages_s=
 Trailing mappings 可以解除；最后一个部分页保留。对 active address space，解除的 Device leases 回到
 同一 active reservation，而不是全局 available capacity。Page 内 frontier 之后的 stale bytes 不进入
 consumer valid domain。
+
+投机终止先按最终提交数量完成 recurrent state、hidden 和 draft context 的补齐，等待 GPU 工作完成后
+发布 committed frontier，再裁掉未提交的尾页。不能为满足某个后续阶段更短的覆盖需求而提前裁剪
+verify 的映射。Terminal settlement 最后解除 active reservation，并按 retention 决策保留 checkpoint。
 
 ### 7.4 Deactivation、retain 与 release
 
@@ -575,7 +608,7 @@ Reference count 表示 sharing，不单独决定写权限。Program 同时验证
 
 ### 9.1 Independent pool frontiers
 
-MTP/DFlash runtime 使用同一个 KV Store 的 backend pool，不建立独立 allocator。
+MTP 和带 full layer 的 DFlash backend 使用 Program KV Store 的 backend pool，不建立独立 allocator。
 
 一次 speculative unit 中，Main 与 backend：
 
@@ -594,12 +627,12 @@ canonical write 覆盖。
 
 | Resource | Owner |
 |---|---|
-| DFlash local sliding-window K/V | fixed per-sequence StateImage |
-| DFlash boundary-local snapshot | fixed checkpoint StateImage |
+| DFlash/DFlash2 local sliding-window K/V | fixed per-sequence StateImage |
+| DFlash/DFlash2 boundary-local snapshot | fixed checkpoint StateImage |
 | Vision/query temporary K/V | Program workspace |
 
-DFlash cyclic K/V 使用自己的 `CyclicKVCacheLayerView` 与 modulo/window 语义；它不持有 page ID、
-block table 或 growing reservation。Exact target geometry由对应 model 文档定义。
+DFlash/DFlash2 cyclic K/V 使用自己的 `CyclicKVCacheLayerView` 与 modulo/window 语义；它不持有 page ID、
+block table 或 growing reservation。模型配置决定其 layer count、heads 和 window。
 
 ---
 
@@ -616,8 +649,7 @@ PagedKVLayerView
 ├── block_table          I32 [Nlogical]
 ├── head_dim
 ├── num_kv_heads
-├── dtype
-└── quant_group
+└── storage
 ```
 
 View 只包含一个 layer 的 plane tensors 与一行 block table。它不包含 allocator handle、request identity、
@@ -632,7 +664,7 @@ PagedKVBatchLayerView
 ├── shared layer planes
 ├── block_tables         I32 [Nlogical, C]
 ├── head_dim / num_kv_heads
-├── dtype / quant_group
+├── storage
 └── table_rows[B]        separate Op input
 ```
 
@@ -722,15 +754,16 @@ consumer，且 replay in-flight期间不得改写同一 row。
 | 职责 | 主要位置 |
 |---|---|
 | Device page pools、reservations与execution tables | `src/core/paged_kv_cache.*` |
+| closed K/V data/scale plane schema | `src/core/paged_kv_storage.h` |
 | Host packed page layout与arena | `src/core/host_kv_arena.*` |
-| logical pages、references与address spaces | `src/targets/qwen3_6/impl/runtime/logical_kv_store.h` |
-| Host extent membership | `src/targets/qwen3_6/impl/runtime/host_kv_extent_store.h` |
-| Program-level KV transition | `src/targets/qwen3_6/impl/runtime/program*.h` |
-| target pool layout与capacity curve | `src/targets/qwen3_6/impl/runtime/layouts*.h` |
+| logical pages、references与address spaces | `src/models/qwen3_5/program/storage/kv_store.h` |
+| Host extent membership | `src/models/qwen3_5/program/storage/host_kv_store.h` |
+| Program-level KV transition | `src/models/qwen3_5/program/transactions/` |
+| model pool layout与capacity curve | `src/models/qwen3_5/program/planning/startup.cpp` |
 | public paged consumer views | `src/core/paged_kv_cache.h` |
 | growing-cache Ops | `include/ninfer/ops/`, `src/ops/` |
 
-Exact model state、KV codec 和 backend mathematics 见
-[Qwen3.6-27B model](qwen3.6-27b-model.md)与
-[Qwen3.6-35B-A3B model](qwen3.6-35b-a3b-model.md)。路径用于定位当前实现，不把文件或类名本身提升为
+Exact model state 和 backend mathematics 见
+[Qwen3.5 model](qwen3_5-model.md)与 [DFlash](dflash.md)；persistent KV codec 和 causal consumer
+numerical contract 由上表中的 growing-cache Ops 定义。路径用于定位当前实现，不把文件或类名本身提升为
 外部接口。

@@ -73,6 +73,7 @@ grow KV. Fixed pressure shapes are:
 | short | 30 | 32 | 64 |
 | long source | 7680 | 16 | 7744 |
 | independent long prefill | 7680 | 32 | 7744 |
+| rotation source | 55000 | 32 | 55040 |
 | interferer | 127 | 256 | 384 |
 | decode holder | 127 | 4096 | 4224 |
 | unsafe borrower | 30 | 3000 | 3072 |
@@ -91,6 +92,20 @@ e(A) + e(B) + e(C) = 8512 > 8192
 ```
 
 Changing the profile changes the legal placement of A; it does not change the requests.
+
+The six-session rotation uses six byte-distinct, early-divergent 55000-token Responses roots. Each
+root has `e=55040`; therefore four roots fit the 240000-token Device KV capacity, while five do not:
+
+```text
+4 * 55040 = 220160 <= 240000
+5 * 55040 = 275200 > 240000
+```
+
+After all six roots complete, the graph warms root 0 once and then branches from each original root
+in three sequential round-robin passes. Host KV makes retention physically possible while the
+number of parked owners and checkpoints forces the materialization planner beyond the small
+A/B/C pressure graph. The report declares paired round-2 versus round-1 TTFT comparisons for every
+rotation position; cross-campaign comparison also matches every role independently.
 
 ## Serve profiles
 
@@ -122,11 +137,14 @@ checkpoint capacity beyond active lanes.
 | `text-cold-8k` | `--max-context 8192 --kv-capacity 8192 --max-concurrency 1 --no-prefix-reuse` |
 | `text-cold-64k` | `--max-context 65536 --kv-capacity 65536 --max-concurrency 1 --no-prefix-reuse` |
 | `text-cold-256k` | `--max-context 262144 --kv-capacity 262144 --max-concurrency 1 --no-prefix-reuse` |
+| `cache-state-working-set` | `--max-context 32768 --kv-capacity 32768 --max-concurrency 1 --prefill-chunk 1024 --spec dflash2 --draft-tokens 7 --lm-head-draft --device-state-slots 8 --host-state-slots 8 --host-kv-mib 0 --max-private-continuations 8 --max-shared-prefixes 8 --max-long-anchors-per-continuation 0` |
+| `cache-private-working-set` | `--max-context 32768 --kv-capacity 32768 --max-concurrency 1 --prefill-chunk 1024 --spec dflash2 --draft-tokens 7 --lm-head-draft --device-state-slots 2 --host-state-slots 2 --host-kv-mib 0 --max-private-continuations 8 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-hot` | `--max-context 8192 --kv-capacity 8192 --max-concurrency 1 --device-state-slots 2 --host-state-slots 0 --host-kv-mib 0 --max-private-continuations 2 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-device` | `--max-context 8192 --kv-capacity 16384 --max-concurrency 2 --device-state-slots 2 --host-state-slots 0 --host-kv-mib 0 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-state-host` | `--max-context 8192 --kv-capacity 16384 --max-concurrency 2 --device-state-slots 0 --host-state-slots 4 --host-kv-mib 0 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-kv-host` | `--max-context 8192 --kv-capacity 8192 --max-concurrency 2 --device-state-slots 2 --host-state-slots 0 --host-kv-mib 8192 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-swap-64k-host` | `--max-context 65536 --kv-capacity 65536 --max-concurrency 2 --device-state-slots 4 --host-state-slots 0 --host-kv-mib 4608 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
+| `cache-rotation-55k-host` | `--max-context 240000 --kv-capacity 240000 --max-concurrency 4 --max-pending-requests 32 --pending-timeout-ms 120000 --spec mtp --draft-tokens 3 --lm-head-draft --device-state-slots 2 --host-state-slots 24 --host-kv-mib 49152 --max-private-continuations 24 --max-shared-prefixes 24 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-both-host` | `--max-context 8192 --kv-capacity 8192 --max-concurrency 2 --device-state-slots 0 --host-state-slots 4 --host-kv-mib 8192 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-evict` | `--max-context 8192 --kv-capacity 8192 --max-concurrency 2 --device-state-slots 1 --host-state-slots 0 --host-kv-mib 0 --max-private-continuations 4 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
 | `cache-pressure-catalog` | `--max-context 8192 --kv-capacity 16384 --max-concurrency 2 --device-state-slots 2 --host-state-slots 0 --host-kv-mib 0 --max-private-continuations 2 --max-shared-prefixes 0 --max-long-anchors-per-continuation 0` |
@@ -160,10 +178,15 @@ Baseline and cache cases:
 | `cold-long-256k` | `text-cold-256k` | One 260096-token, hardware-resident extreme input. |
 | `mixed-four-ordered` | `mixed-four` | Continuation, independent cold long, short, and image requests are submitted one by one after the preceding request is observably accepted by Serve. The two long prompts diverge at the first system-content token. |
 | `mixed-four-concurrent` | `mixed-four` | The same four heterogeneous requests are released through one barrier; no frontend or Engine submission order is assumed. |
+| `shared-state-working-set-shift` | `cache-state-working-set` | A/B/C then D/E/F, with three repeated probe rounds and a final A probe in the same process. |
+| `private-state-working-set-shift` | `cache-private-working-set` | Shared disabled: complete-history A/B conversations followed by four C/D rounds. |
+| `shared-state-hot-prefix` | `cache-state-working-set` | Repeated A probes interleaved with one-shot B–F conversations. |
 | `anonymous-hot-continuation` | `cache-hot` | Chat source then exact full-history continuation; private typed rewrite. |
 | `session-hot-continuation` | `cache-hot` | Stored Responses source then `previous_response_id` continuation. |
 | `session-alternating` | `cache-pressure-device` | `A1, B1, A2, B2` across two stored Responses lineages. |
 | `session-alternating-64k-host-swap` | `cache-swap-64k-host` | Two early-divergent 64512-token sessions run as `A1, B1, A2, B2`; one fits Device, the pair requires two Host KV covers for bidirectional rotation. |
+| `session-rotation-55k-host` | `cache-rotation-55k-host` | Six early-divergent 55000-token stored Responses roots, one warm branch from root 0, then three sequential six-root rounds; covers the large materialization target graph behind sequential Host-KV rotation. |
+| `session-rotation-55k-two-cohort-stream` | `cache-rotation-55k-host` | Replays the complete sequential rotation estate, keeps two 900-token store-free Responses streams continuously active, creates six distinct second-cohort 55000-token roots, then runs three second-cohort resume rounds. This is the process-history, concurrency, and Host State descriptor-pressure graph reported in issue #144. |
 | `unmarked-common-prefix-miss` | `cache-hot` | Two standalone user messages share over 4096 tokens but no legal marker. |
 | `resume-after-interference-device` | `cache-pressure-device` | Fixed A/B/C/A2 graph with source placement available on Device. |
 | `resume-after-interference-state-host` | `cache-pressure-state-host` | Same graph with checkpoint State available only on Host. |
@@ -237,9 +260,12 @@ The normal entry point is one managed command:
 python3 tools/bench/run_serve_ttft_campaign.py --campaign resource --samples 5
 ```
 
-`smoke` runs the short baseline, `resource` runs the six Device/Host/eviction/catalog comparisons
-plus the 64K bidirectional Host-swap case, and `full` runs all 55 audited cases. `resource` is the
-default and `--samples` defaults to one.
+`smoke` runs the short baseline. `resource` runs the six Device/Host/eviction/catalog comparisons,
+the 64K bidirectional Host-swap case, the original six-session 55K Host-rotation case, and its
+two-cohort concurrent-stream pressure case, plus the three State working-set/hot-prefix cases.
+The State profiles use DFlash2 K7, 32768-token KV capacity and no Host KV; their 2048-token roots
+accumulate checkpoint pressure within one sample process. `full` runs every audited case.
+`resource` is the default and `--samples` defaults to one.
 Repeat `--case NAME` instead of `--campaign` to run a focused subset through the same managed
 lifecycle, for example:
 

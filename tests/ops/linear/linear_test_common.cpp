@@ -1,6 +1,9 @@
+#include "core/weight.h"
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
+#include "core/decode_graph.h"
+#include "core/device.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -14,6 +17,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -203,30 +207,30 @@ int compare_output(std::string_view label, std::span<const double> actual,
 
 } // namespace
 
-quantized_weight::PackedWeight make_q4g64_f16s_weight(std::int32_t n, std::int32_t k,
-                                                      std::uint32_t seed) {
-    return quantized_weight::make_patterned_weight(QType::Q4G64_F16S, n, k, seed,
+quantized_weight::PackedWeight make_q4_g64_fp16_weight(std::int32_t n, std::int32_t k,
+                                                       std::uint32_t seed) {
+    return quantized_weight::make_patterned_weight(QType::Q4_G64_FP16, n, k, seed,
                                                    {quantized_weight::RowSplitScalePattern::Small,
                                                     quantized_weight::RowSplitCodePattern::Hashed});
 }
 
-quantized_weight::PackedWeight make_q5g64_f16s_weight(std::int32_t n, std::int32_t k,
-                                                      std::uint32_t seed) {
-    return quantized_weight::make_patterned_weight(QType::Q5G64_F16S, n, k, seed,
+quantized_weight::PackedWeight make_q5_g64_fp16_weight(std::int32_t n, std::int32_t k,
+                                                       std::uint32_t seed) {
+    return quantized_weight::make_patterned_weight(QType::Q5_G64_FP16, n, k, seed,
                                                    {quantized_weight::RowSplitScalePattern::Small,
                                                     quantized_weight::RowSplitCodePattern::Hashed});
 }
 
-quantized_weight::PackedWeight make_q6g64_f16s_weight(std::int32_t n, std::int32_t k,
-                                                      std::uint32_t seed) {
-    return quantized_weight::make_patterned_weight(QType::Q6G64_F16S, n, k, seed,
+quantized_weight::PackedWeight make_q6_g64_fp16_weight(std::int32_t n, std::int32_t k,
+                                                       std::uint32_t seed) {
+    return quantized_weight::make_patterned_weight(QType::Q6_G64_FP16, n, k, seed,
                                                    {quantized_weight::RowSplitScalePattern::Small,
                                                     quantized_weight::RowSplitCodePattern::Hashed});
 }
 
-quantized_weight::PackedWeight make_w8g32_f16s_weight(std::int32_t n, std::int32_t k,
-                                                      std::uint32_t seed) {
-    return quantized_weight::make_patterned_weight(QType::W8G32_F16S, n, k, seed,
+quantized_weight::PackedWeight make_q8_g32_fp16_weight(std::int32_t n, std::int32_t k,
+                                                       std::uint32_t seed) {
+    return quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, n, k, seed,
                                                    {quantized_weight::RowSplitScalePattern::Small,
                                                     quantized_weight::RowSplitCodePattern::Hashed});
 }
@@ -240,7 +244,7 @@ quantized_weight::PackedWeight make_nvfp4_weight(std::int32_t n, std::int32_t k,
 }
 
 quantized_weight::PackedWeight make_fp8_weight(std::int32_t n, std::int32_t k, std::uint32_t seed) {
-    return quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16S, n, k, seed);
+    return quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16, n, k, seed);
 }
 
 void cpu_linear_gemm_fp64(const float* weight, const float* activation, double* output,
@@ -335,44 +339,94 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
         const std::size_t capacity = ops::linear_workspace_capacity_bytes(
             weight.qtype, shape.n, shape.k, invocation.policy, invocation.t, invocation.t);
         DeviceArena workspace(std::max<std::size_t>(capacity, 256));
-        try {
+        std::unique_ptr<DeviceContext> graph_context;
+        DecodeGraphDefinition graph_definition;
+        DecodeGraphExecutable graph;
+        if (invocation.graph_replay) graph_context = std::make_unique<DeviceContext>();
+        const cudaStream_t stream = graph_context ? graph_context->stream : nullptr;
+        const auto launch         = [&] {
             if (invocation.call_form == CallForm::A16Convenience) {
-                ops::linear(input, weight, destination, nullptr);
+                ops::linear(input, weight, destination, stream);
             } else {
-                ops::linear(input, weight, destination, invocation.policy, workspace, nullptr);
+                ops::linear(input, weight, destination, invocation.policy, workspace, stream);
             }
-            cuda_check(cudaDeviceSynchronize(), "synchronize linear");
+        };
+        try {
+            if (invocation.graph_replay) {
+                cuda_check(cudaDeviceSynchronize(), "finish input initialization before capture");
+                graph_definition.capture(stream, launch);
+                graph.instantiate(graph_definition);
+            }
+            for (int replay = 0; replay < (invocation.graph_replay ? 2 : 1); ++replay) {
+                if (replay == 1) {
+                    // BF16 negation is exact. Evaluate the same FP64 oracle using -X below.
+                    auto negative = activation_bits;
+                    for (auto& bits : negative) bits ^= 0x8000;
+                    device_activation.copy_from_host(negative.data(), device_activation.bytes);
+                }
+                output.poison();
+                cuda_check(cudaDeviceSynchronize(), "finish poisoning before replay");
+                if (invocation.graph_replay)
+                    graph.launch(stream);
+                else
+                    launch();
+                cuda_check(cudaStreamSynchronize(stream), "synchronize linear");
+                if (workspace.peak_used() > capacity || workspace.used() != 0) {
+                    std::cerr << case_label << ": workspace query/scope mismatch\n";
+                    ++failures;
+                }
+
+                failures += output.verify_guards(case_label);
+                const std::vector<std::int32_t> columns = shape.comparison == Comparison::Full
+                                                              ? all_indices(invocation.t)
+                                                              : sampled_indices(invocation.t);
+                OutputRead actual = read_output(output.data(), shape.n, invocation.t, oracle_rows,
+                                                columns, case_label);
+                failures += actual.failures;
+
+                if (shape.comparison == Comparison::Full) {
+                    std::span<const double> reference(
+                        full_reference.data(),
+                        checked_elements(shape.n, invocation.t, "reference prefix"));
+                    std::vector<double> negative_reference;
+                    if (replay == 1) {
+                        negative_reference.assign(reference.begin(), reference.end());
+                        for (double& value : negative_reference) value = -value;
+                        reference = negative_reference;
+                    }
+                    failures +=
+                        compare_output(case_label, actual.selected, reference, activation_compute);
+                } else {
+                    std::vector<float> activation =
+                        materialize_activation(activation_bits, shape.k, columns);
+                    if (replay == 1)
+                        for (float& value : activation) value = -value;
+                    std::vector<double> reference(checked_elements(
+                        static_cast<std::int32_t>(oracle_rows.size()),
+                        static_cast<std::int32_t>(columns.size()), "sampled reference"));
+                    cpu_linear_gemm_fp64(oracle_weight.data(), activation.data(), reference.data(),
+                                         static_cast<std::int32_t>(oracle_rows.size()), shape.k,
+                                         static_cast<std::int32_t>(columns.size()));
+                    failures +=
+                        compare_output(case_label, actual.selected, reference, activation_compute);
+                }
+                if (replay == 1) {
+                    std::vector<std::uint16_t> after(activation_bits.size());
+                    device_activation.copy_to_host(after.data(), device_activation.bytes);
+                    for (std::size_t i = 0; i < after.size(); ++i) {
+                        if (after[i] != (activation_bits[i] ^ 0x8000)) {
+                            std::cerr << case_label << ": modified graph activation input\n";
+                            ++failures;
+                            break;
+                        }
+                    }
+                    device_activation.copy_from_host(activation_bits.data(),
+                                                     device_activation.bytes);
+                }
+            }
         } catch (const std::exception& error) {
             std::cerr << case_label << ": unexpected exception: " << error.what() << '\n';
             ++failures;
-            continue;
-        }
-
-        failures += output.verify_guards(case_label);
-        const std::vector<std::int32_t> columns = shape.comparison == Comparison::Full
-                                                      ? all_indices(invocation.t)
-                                                      : sampled_indices(invocation.t);
-        OutputRead actual =
-            read_output(output.data(), shape.n, invocation.t, oracle_rows, columns, case_label);
-        failures += actual.failures;
-
-        if (shape.comparison == Comparison::Full) {
-            failures +=
-                compare_output(case_label, actual.selected,
-                               std::span<const double>(
-                                   full_reference.data(),
-                                   checked_elements(shape.n, invocation.t, "reference prefix")),
-                               activation_compute);
-        } else {
-            const std::vector<float> activation =
-                materialize_activation(activation_bits, shape.k, columns);
-            std::vector<double> reference(
-                checked_elements(static_cast<std::int32_t>(oracle_rows.size()),
-                                 static_cast<std::int32_t>(columns.size()), "sampled reference"));
-            cpu_linear_gemm_fp64(oracle_weight.data(), activation.data(), reference.data(),
-                                 static_cast<std::int32_t>(oracle_rows.size()), shape.k,
-                                 static_cast<std::int32_t>(columns.size()));
-            failures += compare_output(case_label, actual.selected, reference, activation_compute);
         }
     }
 
@@ -388,6 +442,28 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
         if (weight_after != host_weight.payload) {
             std::cerr << label << ": linear modified its persistent weight\n";
             ++failures;
+        }
+    }
+    return failures;
+}
+
+int verify_workspace_envelopes(QType qtype, std::int32_t n, std::int32_t k) {
+    int failures = 0;
+    for (auto policy :
+         {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8, ops::LinearPolicy::AllowA4}) {
+        for (auto [first, last] : {std::pair{1, 4}, std::pair{2, 4}, std::pair{1, 128},
+                                   std::pair{9, 25}, std::pair{24, 129}}) {
+            const auto capacity =
+                ops::linear_workspace_capacity_bytes(qtype, n, k, policy, first, last);
+            for (int t = first; t <= last; ++t) {
+                const auto point = ops::linear_workspace_capacity_bytes(qtype, n, k, policy, t, t);
+                if (point > capacity) {
+                    std::cerr << "Linear workspace interval [" << first << ',' << last
+                              << "] cannot cover T=" << t << " for [" << n << ',' << k << "]\n";
+                    ++failures;
+                    break;
+                }
+            }
         }
     }
     return failures;

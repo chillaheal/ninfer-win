@@ -13,7 +13,7 @@
 namespace ninfer::serve {
 namespace {
 
-using Json = nlohmann::json;
+using Json = RequestJson;
 
 void require_object(const Json& value, const char* message, const char* param = nullptr) {
     if (!value.is_object()) { bad_request(message, param == nullptr ? "" : param); }
@@ -795,6 +795,7 @@ void parse_sampling(const Json& body, GenerationRequest& output) {
 }
 
 struct TemplateOptions {
+    std::string kwargs_json;
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
 };
@@ -814,18 +815,12 @@ TemplateOptions parse_template_options(const Json& body) {
     if (!kwargs.is_object()) {
         bad_request("chat_template_kwargs must be an object", "chat_template_kwargs");
     }
-    for (auto iterator = kwargs.begin(); iterator != kwargs.end(); ++iterator) {
-        if (iterator.key() != "enable_thinking" && iterator.key() != "preserve_thinking" &&
-            !iterator.value().is_null()) {
-            bad_request("chat_template_kwargs." + iterator.key() + " is not supported",
-                        "chat_template_kwargs", "chat_template_option_not_supported");
-        }
-    }
-    auto merge = [&](const char* key, std::optional<bool>& top_level) {
+    output.kwargs_json = kwargs.dump();
+    auto merge         = [&](const char* key, std::optional<bool>& top_level) {
         const std::optional<bool> nested = get_optional_bool(kwargs, key);
         if (top_level && nested && *top_level != *nested) {
             bad_request(std::string("conflicting ") + key + " values", key,
-                        "conflicting_template_option");
+                                "conflicting_template_option");
         }
         if (nested) { top_level = nested; }
     };
@@ -859,6 +854,11 @@ void parse_stream_options(const Json& body, OpenAIChatRequest& output) {
         !options.at("include_obfuscation").is_boolean()) {
         bad_request("include_obfuscation must be a boolean", "stream_options");
     }
+}
+
+void parse_response_observations(const Json& body, OpenAIChatRequest& output) {
+    output.timings_per_token = get_bool(body, "timings_per_token", false);
+    output.return_progress   = get_bool(body, "return_progress", false);
 }
 
 void parse_output_limit(const Json& body, const RequestLimits& limits, OpenAIChatRequest& output) {
@@ -901,11 +901,13 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
     parse_stop(body, output.generation);
     parse_sampling(body, output.generation);
     parse_stream_options(body, output);
+    parse_response_observations(body, output);
     parse_output_limit(body, limits, output);
     parse_reasoning_effort(body, output.generation);
-    const TemplateOptions template_options = parse_template_options(body);
-    output.generation.enable_thinking      = template_options.enable_thinking;
-    output.generation.preserve_thinking    = template_options.preserve_thinking;
+    const TemplateOptions template_options      = parse_template_options(body);
+    output.generation.enable_thinking           = template_options.enable_thinking;
+    output.generation.preserve_thinking         = template_options.preserve_thinking;
+    output.generation.chat_template_kwargs_json = template_options.kwargs_json;
     apply_openai_prompt_cache_policy(output.generation, cache_policy);
     return output;
 }

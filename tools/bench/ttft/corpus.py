@@ -85,6 +85,10 @@ class Corpus:
             "long-8k-independent-32": (7680, 32, 7744),
             "long-64k-32": (64512, 32, 64576),
             "long-64k-independent-32": (64512, 32, 64576),
+            **{
+                f"rotation-55k-{index}": (55000, 32, 55040)
+                for index in range(6)
+            },
             "long-256k-32": (260096, 32, 260160),
             "interferer-256": (127, 256, 384),
             "holder-4096": (127, 4096, 4224),
@@ -130,6 +134,59 @@ class Corpus:
         ):
             raise CorpusError("64K Host-swap entitlement relation no longer holds")
 
+        rotation = [shapes[f"rotation-55k-{index}"] for index in range(6)]
+        if len({record["path"] for record in rotation}) != 6 or len(
+            {record["sha256"] for record in rotation}
+        ) != 6:
+            raise CorpusError("55K rotation shapes are not byte-distinct")
+        if any(record.get("max_peer_common_prefix_tokens", 4) > 3 for record in rotation):
+            raise CorpusError("55K rotation shapes do not diverge at the first content token")
+        original_labels: list[str] = []
+        for record in rotation:
+            messages = self._read_json(self._path(record))
+            if not isinstance(messages, list) or not messages:
+                raise CorpusError("55K rotation fixture has no messages")
+            system = messages[0].get("content") if isinstance(messages[0], dict) else None
+            original, separator, _ = system.partition(" ") if isinstance(system, str) else ("", "", "")
+            if not original or not separator:
+                raise CorpusError("55K rotation fixture has no system label")
+            original_labels.append(original)
+        if len(set(original_labels)) != len(rotation):
+            raise CorpusError("55K rotation system labels are not distinct")
+
+        second_labels: list[str] = []
+        for record, original in zip(rotation, original_labels, strict=True):
+            label = record.get("second_cohort_label")
+            if (
+                not isinstance(label, str)
+                or not label
+                or record.get("second_cohort_prompt_tokens") != 55000
+            ):
+                raise CorpusError("55K second-cohort shape facts are invalid")
+            if len(original) != len(label):
+                raise CorpusError("55K second-cohort label changes the frozen text shape")
+            second_labels.append(label)
+        if len(set(second_labels)) != len(rotation) or set(second_labels) & set(original_labels):
+            raise CorpusError("55K second-cohort roots are not distinct from the first cohort")
+        rotation_entitlement = entitlement(55000, 32)
+        if not 4 * rotation_entitlement <= 240000 < 5 * rotation_entitlement:
+            raise CorpusError("55K rotation Device-KV pressure relation no longer holds")
+
+        for label in "abcdef":
+            record = shapes.get(f"state-2k-{label}", {})
+            counts = record.get("probe_prompt_tokens", [])
+            if (
+                record.get("prompt_tokens") != 2048
+                or record.get("max_output_tokens") != 32
+                or record.get("max_peer_common_prefix_tokens", 4) > 3
+                or not 1900 < record.get("system_frontier_tokens", 0) < 2048
+                or not isinstance(record.get("probe_suffix"), str)
+                or len(counts) != 7
+                or counts[0] != 2048
+                or any(not isinstance(count, int) or count + 31 > 32768 for count in counts)
+            ):
+                raise CorpusError(f"state working-set geometry is invalid for {label}")
+
         for name in ("system-a", "system-b"):
             frontier = self.manifest["shared"][name]["marked_frontier_tokens"]
             if frontier <= 4096 or frontier % 64 == 0:
@@ -174,6 +231,14 @@ class Corpus:
         except KeyError as error:
             raise CorpusError(f"unknown shared fixture: {name}") from error
         return self._path(record).read_text(encoding="utf-8")
+
+    def state_messages(self, label: str, turn: int = 0) -> list[dict[str, Any]]:
+        facts = self.shape(f"state-2k-{label}")
+        if not 0 <= turn < len(facts["probe_prompt_tokens"]):
+            raise CorpusError("state working-set turn exceeds the frozen sequence")
+        messages = self.shape_messages(f"state-2k-{label}")
+        messages[-1]["content"] += facts["probe_suffix"] * turn
+        return messages
 
     def client_tools(self, *, changed_first: bool = False) -> list[dict[str, Any]]:
         record = self.manifest["shared"]["client-tools-32"]

@@ -16,8 +16,9 @@ import shlex
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +45,7 @@ SATURATION_SEEDS = (
 CORPUS_ORDER_SEED = 20260811
 POINT_ARTIFACT_TYPE = "ninfer_serve_concurrency_bench_point"
 SUMMARY_ARTIFACT_TYPE = "ninfer_serve_concurrency_bench_summary"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclasses.dataclass(frozen=True)
@@ -62,7 +63,7 @@ class Point:
     @property
     def key(self) -> str:
         return (
-            f"{self.target}_{self.speculative_mode}_{self.sampling_mode}_"
+            f"{corpus.filename_label(self.target)}_{self.speculative_mode}_{self.sampling_mode}_"
             f"{self.suite.replace('-', '_')}_c{self.concurrency}"
         )
 
@@ -102,8 +103,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--artifact",
         action="append",
         required=True,
-        metavar="TARGET=PATH",
-        help="artifact for a registered target; repeat to benchmark multiple targets",
+        metavar="LABEL=PATH",
+        help="artifact label and server model alias; repeat to benchmark multiple instances",
     )
     parser.add_argument(
         "--mode",
@@ -191,14 +192,12 @@ def build_points(
     for target, artifact in artifacts:
         for mode_name in mode_names:
             backend, draft_tokens = corpus.SPECULATIVE_MODES[mode_name]
-            if backend == "dflash" and target != "qwen3_6_35b_a3b":
-                raise corpus.CampaignError("DFlash measurements require the 35B-A3B target")
             for suite in args.suite:
                 for concurrency in args.concurrency:
                     points.append(
                         Point(
                             target=target,
-                            model_id=corpus.TARGET_MODEL_IDS[target],
+                            model_id=target,
                             artifact=artifact,
                             speculative_mode=mode_name,
                             speculative_backend=backend,
@@ -370,18 +369,18 @@ def validate_server_start(
         point.sampling_mode == "greedy"
     ):
         raise corpus.CampaignError("server_start sampling mode does not match the point")
-    if event.get("artifact", {}).get("target") != point.target:
-        raise corpus.CampaignError("loaded artifact target does not match the point")
+    if Path(event.get("artifact", {}).get("path", "")).resolve() != point.artifact.resolve():
+        raise corpus.CampaignError("loaded artifact path does not match the point")
     if event.get("server", {}).get("public_model_id") != point.model_id:
         raise corpus.CampaignError("server public model id does not match the point")
 
     server_instance_id = event.get("server_instance_id")
-    weights_id = event.get("artifact", {}).get("weights_id")
+    prefill_signature = event.get("artifact", {}).get("prefill_signature")
     if not isinstance(server_instance_id, str) or not server_instance_id:
         raise corpus.CampaignError("server_start has no server_instance_id")
-    if not isinstance(weights_id, str) or not weights_id:
-        raise corpus.CampaignError("server_start has no canonical weights_id")
-    return server_instance_id, weights_id
+    if not isinstance(prefill_signature, str) or not prefill_signature:
+        raise corpus.CampaignError("server_start has no canonical prefill_signature")
+    return server_instance_id, prefill_signature
 
 
 def parse_client_response(
@@ -406,7 +405,10 @@ def parse_client_response(
 
 
 def run_clients(
-    point: Point, jobs: Sequence[Job], port: int
+    point: Point,
+    jobs: Sequence[Job],
+    port: int,
+    on_result: Callable[[ClientResult, dict[str, Any]], None] | None = None,
 ) -> tuple[list[ClientResult], float, float]:
     pending: queue.Queue[Job] = queue.Queue()
     for job in jobs:
@@ -450,6 +452,11 @@ def run_clients(
                     return
                 try:
                     payload = request_payload(point, job)
+                    if point.concurrency == 1:
+                        print(
+                            f"request {job.index + 1}/{len(jobs)} {job.fixture.name} seed={job.seed}",
+                            flush=True,
+                        )
                     if ordered_dispatch:
                         with dispatch_condition:
                             dispatch_condition.wait_for(
@@ -467,6 +474,8 @@ def run_clients(
                         response = corpus.post_json(connection, payload)
                     finished_at = time.monotonic()
                     result = parse_client_response(job, response, started_at, finished_at)
+                    if on_result is not None:
+                        on_result(result, response)
                 except Exception as exc:
                     record_failure(exc)
                     return
@@ -663,7 +672,7 @@ def analyze_point(
     command: Sequence[str],
     server_log: Path,
     server_start: dict[str, Any],
-    weights_id: str,
+    prefill_signature: str,
     events: Sequence[dict[str, Any]],
     results: Sequence[ClientResult],
     campaign_start: float,
@@ -723,7 +732,7 @@ def analyze_point(
         "artifact_type": POINT_ARTIFACT_TYPE,
         "schema_version": SCHEMA_VERSION,
         "target": point.target,
-        "weights_id": weights_id,
+        "prefill_signature": prefill_signature,
         "model": point.model_id,
         "artifact_path": str(point.artifact),
         "speculative_mode": point.speculative_mode,
@@ -768,8 +777,62 @@ def run_point(
 
     with corpus.RunningServer(command, "127.0.0.1", args.port, server_log) as server:
         server_start = server.wait_until_ready()
-        server_instance_id, weights_id = validate_server_start(server_start, point, args)
-        results, campaign_start, campaign_end = run_clients(point, jobs, args.port)
+        server_instance_id, prefill_signature = validate_server_start(server_start, point, args)
+        if point.suite == "corpus-makespan" and point.concurrency == 1:
+            # Persist full responses and the existing per-request metrics off the HTTP send path.
+            # C=1 gives one unambiguous request_done sequence; the measured end is still the final
+            # HTTP response, before this collector is joined.
+            detail_dir = output_dir / "corpus" / point.key
+            detail_dir.mkdir(parents=True, exist_ok=True)
+            records: dict[tuple[str, str, str, str, int], dict[str, Any]] = {}
+            with (
+                (detail_dir / "results.jsonl").open("w", encoding="utf-8") as handle,
+                ThreadPoolExecutor(max_workers=1) as collector,
+            ):
+                def save(result: ClientResult, response: dict[str, Any]) -> None:
+                    job = result.job
+                    event = server.wait_for_request_done(server_instance_id)
+                    spec = corpus.RunSpec(
+                        target=point.target,
+                        model_id=point.model_id,
+                        artifact=point.artifact,
+                        speculative_mode=point.speculative_mode,
+                        speculative_backend=point.speculative_backend,
+                        draft_tokens=point.draft_tokens,
+                        sampling_mode=point.sampling_mode,
+                        fixture=job.fixture,
+                        seed=job.seed,
+                    )
+                    record = corpus.build_result_record(
+                        spec, prefill_signature, request_payload(point, job), response, event
+                    )
+                    corpus.append_record(handle, record)
+                    records[corpus.record_key(record)] = record
+                    metrics = record["metrics"]
+                    rate = metrics["decode_tok_s"]
+                    rate_text = f"{rate:.2f}" if rate is not None else "n/a"
+                    print(
+                        f"done {job.index + 1}/{len(jobs)} {job.fixture.name} "
+                        f"tokens={result.completion_tokens} decode={rate_text}tok/s",
+                        flush=True,
+                    )
+
+                pending_records = []
+
+                def enqueue(result: ClientResult, response: dict[str, Any]) -> None:
+                    if pending_records and pending_records[-1].done():
+                        pending_records[-1].result()
+                    pending_records.append(collector.submit(save, result, response))
+
+                results, campaign_start, campaign_end = run_clients(point, jobs, args.port, enqueue)
+                for future in pending_records:
+                    future.result()
+            rows = corpus.build_summary_rows(
+                records, (point.target,), (point.speculative_mode,), point.sampling_mode
+            )
+            corpus.write_summaries(rows, detail_dir)
+        else:
+            results, campaign_start, campaign_end = run_clients(point, jobs, args.port)
 
     events = load_server_events(server_log, server_instance_id)
     report = analyze_point(
@@ -777,7 +840,7 @@ def run_point(
         command,
         server_log,
         server_start,
-        weights_id,
+        prefill_signature,
         events,
         results,
         campaign_start,
@@ -807,7 +870,7 @@ def add_speedups(reports: Sequence[dict[str, Any]]) -> None:
     for report in reports:
         key = (
             str(report["target"]),
-            str(report["weights_id"]),
+            str(report["prefill_signature"]),
             str(report["speculative_mode"]),
             str(report["sampling_mode"]),
             str(report["suite"]),
@@ -818,7 +881,7 @@ def add_speedups(reports: Sequence[dict[str, Any]]) -> None:
     for report in reports:
         key = (
             str(report["target"]),
-            str(report["weights_id"]),
+            str(report["prefill_signature"]),
             str(report["speculative_mode"]),
             str(report["sampling_mode"]),
             str(report["suite"]),
@@ -839,7 +902,7 @@ def add_speedups(reports: Sequence[dict[str, Any]]) -> None:
 SUMMARY_FIELDS = (
     "suite",
     "target",
-    "weights_id",
+    "prefill_signature",
     "speculative_mode",
     "sampling_mode",
     "corpus_order_seed",
@@ -863,7 +926,7 @@ def summary_row(report: dict[str, Any]) -> dict[str, Any]:
     row = {
         "suite": report["suite"],
         "target": report["target"],
-        "weights_id": report["weights_id"],
+        "prefill_signature": report["prefill_signature"],
         "speculative_mode": report["speculative_mode"],
         "sampling_mode": report["sampling_mode"],
         "corpus_order_seed": report.get("workload_order", {}).get("seed"),
@@ -943,16 +1006,16 @@ def write_summaries(reports: Sequence[dict[str, Any]], output_dir: Path) -> None
     for row in rows:
         key = (
             str(row["target"]),
-            str(row["weights_id"]),
+            str(row["prefill_signature"]),
             str(row["speculative_mode"]),
             str(row["suite"]),
         )
         groups.setdefault(key, []).append(row)
 
     sections: list[str] = []
-    for (target, weights_id, mode, suite), group in groups.items():
+    for (target, prefill_signature, mode, suite), group in groups.items():
         group.sort(key=lambda row: int(row["concurrency"]))
-        title = f"## {target} / {weights_id} / {mode} / {suite}"
+        title = f"## {target} / {prefill_signature} / {mode} / {suite}"
         if suite == "decode-saturation":
             table = markdown_table(
                 ("C", "Requests", "Steady s", "Avg batch", "Decode tok/s", "Speedup"),

@@ -79,6 +79,24 @@ def _comparison(
 # These are declared observations, not claims about private cache actions. A positive delta always
 # means that the subject has higher external TTFT than its baseline.
 COMPARISONS = (
+    *tuple(
+        _comparison(
+            f"{kind}_state_{label}{turn}_vs_{baseline}", "State working set",
+            f"{kind.capitalize()} State {label}{turn} vs {label}{baseline}",
+            f"{kind}-state-working-set-shift", f"{label}{turn}",
+            f"{kind}-state-working-set-shift", f"{label}{baseline}",
+        )
+        for kind, labels in (("shared", "def"), ("private", "cd"))
+        for label in labels for turn in range(1, 4)
+        for baseline in ((0,) if turn == 1 else (0, 1))
+    ),
+    *tuple(
+        _comparison(
+            f"state_hot_a{turn}_vs_a1", "State working set", f"Hot prefix a{turn} vs a1",
+            "shared-state-hot-prefix", f"a{turn}", "shared-state-hot-prefix", "a1",
+        )
+        for turn in range(2, 7)
+    ),
     _comparison(
         "resume_state_host_vs_device",
         "resource pressure",
@@ -168,6 +186,18 @@ COMPARISONS = (
         "b2",
         "session-alternating-64k-host-swap",
         "b1",
+    ),
+    *tuple(
+        _comparison(
+            f"session_rotation_55k_round2_context_{index}_vs_round1",
+            "resource pressure",
+            f"55K rotation context {index} round 2 vs round 1",
+            "session-rotation-55k-host",
+            f"round-2-context-{index}",
+            "session-rotation-55k-host",
+            f"round-1-context-{index}",
+        )
+        for index in range(6)
     ),
     _comparison(
         "unmarked_second_vs_first",

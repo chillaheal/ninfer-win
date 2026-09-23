@@ -65,16 +65,20 @@ __global__ __launch_bounds__(
 
     extern __shared__ __align__(128) unsigned char shared_bytes[];
     auto& shared = *reinterpret_cast<Nvfp4LinearSwiGluTmaSharedStorage<Schedule>*>(shared_bytes);
-    const int token_begin = static_cast<int>(blockIdx.y) * Schedule::kBlockM;
-    const int pair_begin  = static_cast<int>(blockIdx.x) * kPairN;
+    static_assert(Schedule::kStages >= 2, "the activation-scale buffer needs two slots");
+    int block_x = 0;
+    int block_y = 0;
+    nvfp4_tma_raster_blocks(block_x, block_y);
+    const int token_begin = block_y * Schedule::kBlockM;
+    const int pair_begin  = block_x * kPairN;
 
     if (threadIdx.x == 0) {
 #pragma unroll
         for (int stage = 0; stage < Schedule::kStages; ++stage) {
-            nvfp4_mbarrier_init(&shared.full[stage], 1);
-            nvfp4_mbarrier_init(&shared.empty[stage], Schedule::kConsumerWarps);
+            cta_mbarrier_init(&shared.full[stage], 1);
+            cta_mbarrier_init(&shared.empty[stage], Schedule::kConsumerWarps);
         }
-        asm volatile("fence.mbarrier_init.release.cluster;" : : : "memory");
+        cta_mbarrier_fence_init();
     }
     __syncthreads();
 
@@ -89,13 +93,20 @@ __global__ __launch_bounds__(
             for (int k_tile = 0; k_tile < kKTiles; ++k_tile) {
                 const int stage                 = k_tile % Schedule::kStages;
                 const std::uint32_t empty_phase = 1U ^ ((k_tile / Schedule::kStages) & 1U);
-                nvfp4_mbarrier_wait(&shared.empty[stage], empty_phase);
+                cta_mbarrier_wait(&shared.empty[stage], empty_phase);
+                constexpr std::uint32_t kScaleBytes =
+                    Schedule::kBlockM * Schedule::kScaleWordsPerRow * 4;
                 constexpr std::uint32_t kTransactionBytes =
                     Schedule::kBlockM * Schedule::kCodeRowBytes +
-                    Schedule::kBlockN * Schedule::kCodeRowBytes +
-                    Schedule::kBlockM * Schedule::kScaleWordsPerRow * 4 +
+                    Schedule::kBlockN * Schedule::kCodeRowBytes + kScaleBytes +
                     2 * Schedule::kBlockN * Schedule::kK64PerStage * 4;
-                nvfp4_mbarrier_arrive_expect_tx(&shared.full[stage], kTransactionBytes);
+                // A scale tile covers kNvfp4ScaleTileGroups groups, which is two K tiles, so the
+                // box is fetched on the even tile only and the odd tile expects that many bytes
+                // fewer.
+                const bool load_scales = (k_tile & 1) == 0;
+                cta_mbarrier_arrive_expect_tx(&shared.full[stage],
+                                              load_scales ? kTransactionBytes
+                                                          : kTransactionBytes - kScaleBytes);
 
                 auto& tensors = shared.scratch.tensors;
                 nvfp4_tma_load_2d(tensors.a_codes[stage], &descriptors.a_codes,
@@ -107,8 +118,16 @@ __global__ __launch_bounds__(
                 nvfp4_tma_load_2d(tensors.b_codes[stage] + kPairN * Schedule::kCodeRowBytes,
                                   &descriptors.b_codes, k_tile * Schedule::kCodeRowBytes,
                                   pair_begin + kIntermediate, &shared.full[stage]);
-                nvfp4_tma_load_2d(tensors.a_scale4[stage], &descriptors.a_scales, (k_tile / 2) * 16,
-                                  token_begin, &shared.full[stage]);
+                if (load_scales) {
+                    // Tile-contiguous, so the box address is a tile index; see the shared W4A4
+                    // producer for the same addressing.
+                    constexpr int kScaleTilesPerPlane =
+                        Geometry::kGroupsPerRow / kNvfp4ScaleTileGroups;
+                    const int scale_tile =
+                        (token_begin / Schedule::kBlockM) * kScaleTilesPerPlane + k_tile / 2;
+                    nvfp4_tma_load_2d(tensors.a_scale4[(k_tile / 2) & 1], &descriptors.a_scales, 0,
+                                      scale_tile * 16, &shared.full[stage]);
+                }
 
                 const int gate_scale_row = ((pair_begin / 128) * Geometry::kScaleTilesPerRow +
                                             k_tile * Schedule::kK64PerStage) *
@@ -150,7 +169,7 @@ __global__ __launch_bounds__(
     for (int k_tile = 0; k_tile < kKTiles; ++k_tile) {
         const int stage                = k_tile % Schedule::kStages;
         const std::uint32_t full_phase = (k_tile / Schedule::kStages) & 1U;
-        nvfp4_mbarrier_wait(&shared.full[stage], full_phase);
+        cta_mbarrier_wait(&shared.full[stage], full_phase);
 
 #pragma unroll
         for (int local_k64 = 0; local_k64 < Schedule::kK64PerStage; ++local_k64) {
@@ -171,8 +190,9 @@ __global__ __launch_bounds__(
                             a_fragments[mma_m][3], smem_addr(address));
                 const int scale_row = warp_m * Schedule::kWarpM + mma_m * 16 + sfa_row;
                 a_scales[mma_m] =
-                    tensors.a_scale4[stage][scale_row * Schedule::kScaleWordsPerRow +
-                                            (k_tile & 1) * Schedule::kK64PerStage + local_k64];
+                    tensors.a_scale4[(k_tile / 2) & 1][scale_row * Schedule::kScaleWordsPerRow +
+                                                       (k_tile & 1) * Schedule::kK64PerStage +
+                                                       local_k64];
             }
 
 #pragma unroll
@@ -212,7 +232,7 @@ __global__ __launch_bounds__(
                 }
             }
         }
-        if (lane == 0) { nvfp4_mbarrier_arrive(&shared.empty[stage]); }
+        if (lane == 0) { cta_mbarrier_arrive(&shared.empty[stage]); }
     }
 
     asm volatile("bar.sync 1, %0;" : : "r"(Schedule::kConsumerThreads) : "memory");

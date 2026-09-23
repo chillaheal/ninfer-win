@@ -83,17 +83,18 @@ public:
 
     [[nodiscard]] std::uint32_t count_tokens(PromptInput input,
                                              const PreparationControl& control = {}) const;
-    [[nodiscard]] PromptCapabilities prompt_capabilities() const;
     [[nodiscard]] ModelSamplingDefaults sampling_defaults() const;
 
     // Establishes queue membership synchronously with a fixed output consumer mode. Destroying an
     // unconsumed handle cancels its request; wait() owns result consumption and may run
     // independently from GPU execution. Streaming mode requires a non-null sink in wait() and
     // publishes one exact GenerationStart before output deltas; Aggregate mode requires a null
-    // sink.
+    // sink. Observation options request protocol-neutral publication facts without changing the
+    // execution request.
     [[nodiscard]] GenerationHandle
     submit(PreparedPrompt prompt, RequestOptions options,
            OutputConsumerMode consumer_mode                       = OutputConsumerMode::Aggregate,
+           GenerationObservationOptions observation               = {},
            std::chrono::steady_clock::time_point pending_deadline = {});
 
     GenerationResult generate(PreparedPrompt prompt, RequestOptions options,
@@ -105,6 +106,8 @@ public:
     [[nodiscard]] MemorySummary memory_summary() const;
     [[nodiscard]] RuntimeStats runtime_stats() const;
     [[nodiscard]] MediaCacheSummary media_cache_summary() const;
+    [[nodiscard]] bool is_available() const;
+
     void reset_memory_peaks() noexcept;
 
 private:
