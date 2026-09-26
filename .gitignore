@@ -52,6 +52,17 @@ out/
 tools/freq_corpus/fixtures/*
 !tools/freq_corpus/fixtures/ranking/
 
+# Debug / test / runtime artifacts
+*.old
+__probe*
+nul
+Testing/
+ninfer-expert-usage.txt
+qwen3_8_flash_next/
+.agent/*probe*.txt
+.agent/*_ranking.txt
+.agent/tmp_*
+
 # Editor / OS
 .vscode/
 .idea/
