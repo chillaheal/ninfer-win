@@ -1,6 +1,31 @@
 Status:
-P1.5 (async expert pipeline) acceleration arc COMPLETE + verified (2026-09-26).
-  - P1.5.3 device-side top-k (kills router D2H stall): done, in the tree.
+[2026-09-26] flash_next serve 0-tok/s prefill HANG — GUI auto-adapt DONE + 100k
+context supported; HANG root cause NOT confirmed (needs live NINFER_P13_HB
+capture on a free GPU).
+  - GUI auto-adapt: apps/gui/main.cpp append_sampling_args (587-600) — REMOVED
+    the `if (window == 0 || window > fit) window = fit;` down-clamp. The user's
+    context window is now kept at FACE VALUE (empty field -> probed fit). A wider
+    context is honored; it just evicts more experts to CPU/RAM. BUILT + linked:
+    .agent/gui_build.bat -> ninfer-gui EXIT=0 (2 warnings C4312, pre-existing).
+  - 100k context = supported by EXISTING engine: QSA K/V + indexer pools size to
+    max_context (real_program.cpp:852-895, qsa_page_count_ = ceil(max/64)),
+    allocated BEFORE expert_gpu_lru_.init() (905). Wider context -> bigger KV
+    pool -> smaller VRAM remainder -> fewer GPU expert slots -> more experts
+    evicted to CPU/RAM. No engine change needed; the GUI clamp removal is the
+    only change required.
+  - HANG (0 tok/s prefill, CPU 7%, GPU 0%, no SSD): confirmed HOST-side block
+    (not a slow GEMM, not an OOM, not LRU starvation). 23.3 GB free post-weights
+    rules out OOM; LRU init is AFTER KV pools so it sizes to the remainder, not
+    starve the KV; cpu_moe parallel_for spawns fresh std::thread per call (no
+    persistent-pool deadlock). Exact block point UNCONFIRMED. "samma fel som
+    innan" — pre-existing, not from recent changes.
+  - BLOCKED on hang root-cause: a live NINFER_P13_HB capture needs a FREE GPU.
+    The 27B serve (PID 16488) hosts THIS Claude session; stopping it ends the
+    session. Needs user go-ahead to stop it, OR the user runs the serve with
+    NINFER_P13_HB set (cont_hb localizes the last-reached phase/layer: "RR in",
+    "RR preloop", "RR L{layer}").
+Next step: user go-ahead to stop 27B + run serve with NINFER_P13_HB=1 to localize
+the prefill hang (last heartbeat line = the phase/layer it died in).
   - Expert residency 3-tier (GPU dynamic LRU / pinned RAM / mmap RAM-warm) +
     usage-file seeding (ninfer-expert-usage.txt): done.
   - NEW this turn: periodic usage flush — RealProgram::run_round now re-flushes
@@ -23,14 +48,24 @@ Perf ceiling (real 177 GB MoE on 32 GB card, no MTP head):
     seeding address the COLD first request (benchmark self-warms via S5 16
     rounds, so a seeded benchmark shows no delta — p153 vs p154 identical).
 Plan position:
-Current step: Full build into project-root build/ DONE + verified (09:42-09:47, [580/580], exit 0); P1.5 arc closed; usage persistence robust to hard-kill.
+Current step: "probe failed" FIXED (2026-09-26). Root cause: probe_kv_capacity
+(registry.cpp) had no Qwen3_8_FlashNext::model_id case -> threw "no registered
+target". Fix: hand-rolled probe_flash_next (real_bind_only weight_bytes +
+make_sequence_planner KV curve + kPagedMaxContext=262144 ceiling) + dispatch
+case in probe_kv_capacity. probe_registered<T> unusable (Package has no
+plan_load). A dedup of a duplicated probe_flash_next left construct_flash_next
+unterminated (missing closing brace) -> fixed by re-adding the brace.
+VERIFIED: ninfer-cli --probe on models/qwen3_8_flash_next.ninfer =>
+kv_fit_tokens=262144, weights=6021282304 (~5.6GiB), free~23.8GiB, 0.25s, exit 0.
+Deploy build exit 0 (build/apps/ ninfer-cli + ninfer-serve relinked 10:27 +
+all DLLs). GUI delegates probe to CLI so it is fixed too.
 Completed: P1 (all), P1V.1-4, V1.1, V1.2 (ctest green), P3.1-3.4, P1.5.3,
-residency tiers + seeding, periodic usage flush (build + ctest green 2026-09-26).
-Next step: ENDGAME — project sits at its documented hardware ceiling on this
-box. Remaining open items are low-value or blocked: #4 V1.3
-NINFER_EXPERT_GPU_VERIFY (diagnostic only, needs serve stop + real model),
-#5 Phase 2 MTP (BLOCKED: no MTP head for this model). No further heavy runs
-needed; acceleration work is done and verified.
+residency tiers + seeding, periodic usage flush, probe fix (build exit 0
+2026-09-26).
+Next step: (user-deferred) MoE-specific probe display "~experts fit in VRAM at
+xxx context" — explicitly deferred ("get it to start first"). Remaining open:
+#4 V1.3 NINFER_EXPERT_GPU_VERIFY (diagnostic), #5 Phase 2 MTP (BLOCKED: no MTP
+head). No further heavy runs; acceleration + probe work done and verified.
 
 Key facts:
 - [2026-09-26] FULL BUILD to project-root build/ DONE + verified (09:42 -> 09:47, exit 0, [580/580], ~5 min; ninja reused prior objs + recompiled changed TUs, all links fresh 09:47). Reusable recipe: configure the RESOLVED core-tree root as the CMake source (-S), NOT the `core` junction — CMAKE_SOURCE_DIR must be the real core root because top-level CMake derives `${CMAKE_SOURCE_DIR}/../deps/*` (FFmpeg, CURL); the `core` junction's parent has no deps/. So -S = the dir `core` points at (the one with a sibling `deps/`). Flags: -G Ninja, Release, -DBUILD_TESTING=ON (gates all 18 flash_next targets in core/tests/CMakeLists.txt; default OFF -> "ninja: unknown target"), pinned toolchain (MSVC 14.44.35207 Hostx64/x64 cl, CUDA v13.3 nvcc, VS-bundled ninja), -DNINFER_FFMPEG_ROOT=<core-parent>/deps/ffmpeg. Artifacts (FN_PROJ_ROOT=C:/fn): build/tests/{flash_next_real_load,flash_next_placement}.exe + 14 flash_next test exes, build/apps/ninfer-cli.exe, build/src/ninfer_engine.lib. Driver: .agent/full_build.bat; visible-window wrapper .agent/full_build_run.ps1; transcript .agent/full_build_run.log. build/ now in .gitignore.
