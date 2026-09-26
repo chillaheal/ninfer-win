@@ -373,6 +373,31 @@ std::vector<std::uint32_t> moe_topk_union(const float* logits, int T, int E, int
   return out;
 }
 
+// P1.5.3 — union of expert ids from the per-token device top-K ids (each row is
+// that token's K selected experts, ascending). Yields the SAME set as
+// moe_topk_union when the device top-K matches the host (value DESC, id ASC)
+// rule -- which it does, because it is the op's own moe_router_topk_kernel (the
+// same selection the GEMM consumes).
+std::vector<std::uint32_t> moe_union_from_ids(const std::int32_t* ids, int T, int K, int E) {
+  std::vector<bool> selected(static_cast<std::size_t>(E), false);
+  for (int t = 0; t < T; ++t) {
+    const std::int32_t* row = ids + static_cast<std::size_t>(t) * K;
+    for (int k = 0; k < K; ++k) {
+      const int e = row[k];
+      if (e >= 0 && e < E) {
+        selected[static_cast<std::size_t>(e)] = true;
+      }
+    }
+  }
+  std::vector<std::uint32_t> out;
+  for (std::uint32_t e = 0; e < static_cast<std::size_t>(E); ++e) {
+    if (selected[e]) {
+      out.push_back(e);
+    }
+  }
+  return out;
+}
+
 Tensor make_tensor(const void* data, DType dtype, std::initializer_list<std::int32_t> shape) {
   return Tensor(const_cast<void*>(data), dtype, shape);
 }
@@ -794,6 +819,10 @@ RealProgram::RealProgram(const RealModelView& view, DeviceContext& device,
   // Expert-usage histogram: per-(layer, expert) routed-expert selection counts.
   expert_usage_.assign(static_cast<std::size_t>(G::kNumLayers) * G::kNumExperts, 0);
 
+  // P3.3: CPU offload of the coldest MoE layers (NINFER_MOE_CPU_LAYERS, off by
+  // default). One-time D2H of the shared planes + shared_gate for each CPU layer.
+  init_moe_cpu_offload();
+
   // Recurrent GDN state: one [128, 128, 48] FP32 per GDN layer, zeroed.
   const std::size_t gdn_state_bytes =
       static_cast<std::size_t>(G::kGdnStateDim) * G::kGdnStateDim * G::kGdnValueHeads *
@@ -878,6 +907,11 @@ RealProgram::RealProgram(const RealModelView& view, DeviceContext& device,
   // P13 M4: seed the expert residency hierarchy from a prior run's usage file
   // (top-N -> VRAM via the GPU LRU, top-R -> RAM via the mmap page cache).
   seed_expert_residency();
+
+  // Arm the periodic expert-usage flush (run_round): start the interval now so
+  // the first periodic flush never clobbers this run's seed file with an empty
+  // histogram, and a hard-killed serve still leaves a fresh usage file.
+  last_usage_flush_ = std::chrono::steady_clock::now();
 }
 
 RealProgram::~RealProgram() {
@@ -1472,6 +1506,91 @@ void RealProgram::qsa_block(std::uint32_t layer, int T, int pos0, __nv_bfloat16*
   detail::mini_fp8_linear(reduced, T, 24 * 256, q.output.codes, q.output.scale, G::kHidden, y, s);
 }
 
+void RealProgram::init_moe_cpu_offload() {
+  const char* v = std::getenv("NINFER_MOE_CPU_LAYERS");
+  moe_cpu_enabled_ = (v != nullptr && v[0] != '\0' && v[0] != '0');
+  moe_cpu_layer_.assign(G::kNumLayers, 0);
+  moe_cpu_state_.resize(G::kNumLayers);
+  moe_cpu_w_.assign(G::kNumLayers, CpuMoeWeights{});
+  if (!moe_cpu_enabled_) {
+    return;
+  }
+
+  // The coldest-30/48 layer table (P3.1 usage histogram, ranks 18-47; the
+  // deterministic tiebreak chose this exact set). Engine layer indices (0-based,
+  // view_.layers[l]).
+  static const std::uint32_t kCpuLayers[30] = {
+      0,  5,  6,  8,  10, 12, 13, 14, 15, 16, 20, 23, 24, 26, 27, 28, 29, 30, 31, 32,
+      33, 35, 36, 39, 40, 43, 44, 45, 46, 47};
+  for (const std::uint32_t l : kCpuLayers) {
+    if (l < G::kNumLayers) moe_cpu_layer_[l] = 1;
+  }
+
+  // One shared CpuMoe instance (prod NVFP4 geometry, 64 dequant LRU slots).
+  moe_cpu_ = std::make_unique<CpuMoe>(static_cast<int>(G::kNumExperts),
+                                      static_cast<int>(G::kExpertsPerToken),
+                                      static_cast<int>(G::kHidden),
+                                      static_cast<int>(G::kMoeIntermediate), 64);
+
+  // Round scratch for the activation transfer (xhat D2H / y H2D), token-major
+  // [T][G::kHidden] BF16, sized for the largest round.
+  const std::size_t act_elems = static_cast<std::size_t>(kMaxRoundTokens) * G::kHidden;
+  moe_cpu_x_.assign(act_elems, 0);
+  moe_cpu_y_.assign(act_elems, 0);
+
+  // Shared-plane byte sizes (the shared expert shares a routed expert's per-expert
+  // geometry): gu [2I][K] / dn [K][I], NVFP4 (codes = N*K/2, scales = N*K/16).
+  const std::size_t gu_c = static_cast<std::size_t>(2 * G::kMoeIntermediate) * (G::kHidden / 2);
+  const std::size_t gu_s = static_cast<std::size_t>(2 * G::kMoeIntermediate) * (G::kHidden / 16);
+  const std::size_t dn_c = static_cast<std::size_t>(G::kHidden) * (G::kMoeIntermediate / 2);
+  const std::size_t dn_s = static_cast<std::size_t>(G::kHidden) * (G::kMoeIntermediate / 16);
+
+  for (std::uint32_t l = 0; l < G::kNumLayers; ++l) {
+    if (!moe_cpu_layer_[l]) {
+      continue;
+    }
+    const MoeLayerWeights& m = view_.layers[l].mlp;
+    const RoutedHostBases& routed = view_.routed_host[l];
+    CpuMoeLayerState& st = moe_cpu_state_[l];
+    st.shared_gu_codes.assign(gu_c, 0);
+    st.shared_gu_scales.assign(gu_s, 0);
+    st.shared_dn_codes.assign(dn_c, 0);
+    st.shared_dn_scales.assign(dn_s, 0);
+    st.shared_gate.assign(G::kHidden, 0);
+    auto d2h = [&](std::uint8_t* dst, const void* src, std::size_t n, const char* what) {
+      const cudaError_t e = cudaMemcpy(dst, src, n, cudaMemcpyDeviceToHost);
+      if (e != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("flash_next real MoE CPU offload D2H failed (") + what + "): " +
+            cudaGetErrorString(e));
+      }
+    };
+    d2h(st.shared_gu_codes.data(), m.shared_gu_codes, gu_c, "shared_gu_codes");
+    d2h(st.shared_gu_scales.data(), m.shared_gu_scales, gu_s, "shared_gu_scales");
+    d2h(st.shared_dn_codes.data(), m.shared_dn_codes, dn_c, "shared_dn_codes");
+    d2h(st.shared_dn_scales.data(), m.shared_dn_scales, dn_s, "shared_dn_scales");
+    d2h(reinterpret_cast<std::uint8_t*>(st.shared_gate.data()),
+        static_cast<const void*>(m.shared_gate_bf16),
+        G::kHidden * sizeof(std::uint16_t), "shared_gate");
+
+    // Wire this layer's CpuMoeWeights: shared planes -> the D2H'd host buffers;
+    // routed planes -> the host mmap bases with the per-expert plane stride.
+    CpuMoeWeights& w = moe_cpu_w_[l];
+    w.shared_gu_codes = st.shared_gu_codes.data();
+    w.shared_gu_scales = st.shared_gu_scales.data();
+    w.shared_dn_codes = st.shared_dn_codes.data();
+    w.shared_dn_scales = st.shared_dn_scales.data();
+    w.shared_gu_divisor = m.shared_gu_divisor;
+    w.shared_dn_divisor = m.shared_dn_divisor;
+    w.routed_gu_codes = CpuMoePlane{routed.gu_codes, static_cast<std::int64_t>(kSrcGuCodes)};
+    w.routed_gu_scales = CpuMoePlane{routed.gu_scales, static_cast<std::int64_t>(kSrcGuScales)};
+    w.routed_dn_codes = CpuMoePlane{routed.dn_codes, static_cast<std::int64_t>(kSrcDnCodes)};
+    w.routed_dn_scales = CpuMoePlane{routed.dn_scales, static_cast<std::int64_t>(kSrcDnScales)};
+    w.routed_gu_divisor = m.routed_gu_divisor;
+    w.routed_dn_divisor = m.routed_dn_divisor;
+  }
+}
+
 void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
                             __nv_bfloat16* y) {
   const MoeLayerWeights& m = view_.layers[layer].mlp;
@@ -1482,35 +1601,59 @@ void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
   auto block_scope = workspace_.scope();
 
   seg_begin(B_MOE_ROUTER);
-  // Host top-10 (real_router + D2H) drives the per-token expert scatter into the
-  // shared moe_window; the op re-runs routing deterministically and reads
-  // expert_window + e * kExpertBytes.
+  // real_router produces the device logits [T][E]; the device top-K (P1.5.3) then
+  // selects each token's experts on-device (the op's own moe_router_topk_kernel),
+  // so the scatter union is built from a tiny [T][K] id D2H instead of a host
+  // stable_sort over the full [T][E]. The op re-runs this same routing
+  // deterministically for the GEMM, so the device union is the exact set the GEMM
+  // consumes.
+  const std::int32_t E32 = static_cast<std::int32_t>(G::kNumExperts);
+  const std::int32_t K32 = static_cast<std::int32_t>(G::kExpertsPerToken);
   float* logits =
       static_cast<float*>(workspace_.alloc_bytes(static_cast<std::size_t>(T) * 4 *
                                                  G::kNumExperts).data);
   detail::real_router(xhat, T, G::kHidden, static_cast<int>(G::kNumExperts),
                       reinterpret_cast<const __nv_bfloat16*>(m.router_bf16), logits, s);
+  std::int32_t* dtopk_ids = static_cast<std::int32_t*>(
+      workspace_.alloc_bytes(static_cast<std::size_t>(T) * K32 * sizeof(std::int32_t)).data);
+  float* dtopk_alpha = static_cast<float*>(
+      workspace_.alloc_bytes(static_cast<std::size_t>(T) * K32 * sizeof(float)).data);
+  ops::sparse_moe_nvfp4_router_topk(logits, T, E32, K32, dtopk_ids, dtopk_alpha, s);
   seg_end();
-  // The router D2H gate: from here the CPU blocks (sync + D2H + host top-10
-  // union + the pageable-H2D staging copies). barrier_begin/end bracket the
-  // whole window (P13 M1).
+  // The router gate: from here the CPU blocks (sync + id D2H + host union + the
+  // pageable-H2D staging copies). barrier_begin/end bracket the whole window
+  // (P13 M1). P1.5.3 drops the host stable_sort over [T][E]; the union now comes
+  // from the [T][K] device ids.
   barrier_begin();
-  const std::size_t logits_count =
-      static_cast<std::size_t>(T) * G::kNumExperts * sizeof(float);
+  // P3.3 CPU-offload layers still need the full host logits for CpuMoe's own top-k.
+  const bool cpu_layer = moe_cpu_enabled_ && moe_cpu_layer_[layer];
   const cudaError_t se = cudaStreamSynchronize(s);
   if (se != cudaSuccess) {
     throw std::runtime_error(std::string("flash_next real MoE D2H sync failed: ") +
                              cudaGetErrorString(se));
   }
-  const cudaError_t ce =
-      cudaMemcpy(router_host_.data(), logits, logits_count, cudaMemcpyDeviceToHost);
-  if (ce != cudaSuccess) {
-    throw std::runtime_error(std::string("flash_next real MoE D2H failed: ") +
-                             cudaGetErrorString(ce));
+  if (cpu_layer) {
+    const std::size_t logits_count =
+        static_cast<std::size_t>(T) * G::kNumExperts * sizeof(float);
+    const cudaError_t ce =
+        cudaMemcpy(router_host_.data(), logits, logits_count, cudaMemcpyDeviceToHost);
+    if (ce != cudaSuccess) {
+      throw std::runtime_error(std::string("flash_next real MoE D2H failed: ") +
+                               cudaGetErrorString(ce));
+    }
   }
-  const std::vector<std::uint32_t> selected = moe_topk_union(
-      static_cast<const float*>(router_host_.data()), T,
-      static_cast<int>(G::kNumExperts), static_cast<int>(G::kExpertsPerToken));
+  const std::size_t ids_count = static_cast<std::size_t>(T) * K32;
+  std::vector<std::int32_t> htopk_ids(ids_count);
+  const cudaError_t cie = cudaMemcpy(
+      htopk_ids.data(), dtopk_ids, ids_count * sizeof(std::int32_t), cudaMemcpyDeviceToHost);
+  if (cie != cudaSuccess) {
+    throw std::runtime_error(std::string("flash_next real MoE top-k id D2H failed: ") +
+                             cudaGetErrorString(cie));
+  }
+  const std::vector<std::uint32_t> selected =
+      cpu_layer
+          ? moe_topk_union(static_cast<const float*>(router_host_.data()), T, E32, K32)
+          : moe_union_from_ids(htopk_ids.data(), T, K32, E32);
   if (timings_enabled_) {
     timer_.union_experts += static_cast<long long>(selected.size());
   }
@@ -1519,6 +1662,43 @@ void RealProgram::moe_block(std::uint32_t layer, int T, __nv_bfloat16* xhat,
   // scatter stages into the window, so this is the real set the GPU GEMM consumes).
   for (const std::uint32_t e : selected) {
     ++expert_usage_[static_cast<std::size_t>(layer) * G::kNumExperts + e];
+  }
+
+  // P3.3 — CPU offload: for a CPU-routed layer, run the MoE forward on the CPU
+  // (CpuMoe NVFP4 GEMM) instead of the expert scatter + the GPU sparse_moe_nvfp4.
+  // The router logits (router_host_) and the host top-k (selected) are already
+  // done above; the CPU top-k consumes router_host_ — the same D2H'd device router
+  // output the p10 gate proves is a bit-identical input to the device top-k. The
+  // activation transfer (xhat D2H / y H2D) replaces the ~2.76 MB/expert x N expert
+  // H2D the GPU path would have issued.
+  if (moe_cpu_enabled_ && moe_cpu_layer_[layer]) {
+    const std::size_t act_bytes = static_cast<std::size_t>(T) * G::kHidden * sizeof(std::uint16_t);
+    seg_begin(B_MOE_SCATTER);  // the activation transfer to the CPU
+    const cudaError_t xd =
+        cudaMemcpyAsync(moe_cpu_x_.data(), xhat, act_bytes, cudaMemcpyDeviceToHost, s);
+    if (xd != cudaSuccess) {
+      throw std::runtime_error(std::string("flash_next real MoE CPU offload xhat D2H failed: ") +
+                               cudaGetErrorString(xd));
+    }
+    const cudaError_t xs = cudaStreamSynchronize(s);
+    if (xs != cudaSuccess) {
+      throw std::runtime_error(std::string("flash_next real MoE CPU offload D2H sync failed: ") +
+                               cudaGetErrorString(xs));
+    }
+    seg_end();
+    seg_begin(B_MOE_GEMM);  // the CPU NVFP4 GEMM (blocks the CPU; no expert H2D)
+    moe_cpu_->run(static_cast<const float*>(router_host_.data()), T, moe_cpu_x_.data(),
+                  moe_cpu_state_[layer].shared_gate.data(), moe_cpu_w_[layer],
+                  moe_cpu_y_.data(), nullptr, nullptr);
+    const cudaError_t yh =
+        cudaMemcpyAsync(y, moe_cpu_y_.data(), act_bytes, cudaMemcpyHostToDevice, s);
+    if (yh != cudaSuccess) {
+      throw std::runtime_error(std::string("flash_next real MoE CPU offload y H2D failed: ") +
+                               cudaGetErrorString(yh));
+    }
+    seg_end();
+    barrier_end();
+    return;
   }
 
   const RoutedHostBases& routed = view_.routed_host[layer];
@@ -1877,6 +2057,17 @@ std::uint32_t RealProgram::run_round(const std::vector<std::uint32_t>& tokens, i
     char hb[64];
     std::snprintf(hb, sizeof(hb), "RR in  T=%d pos0=%d", T, pos0);
     cont_hb(hb);
+  }
+  // Periodically flush the expert-usage histogram to disk (time-gated ~30 s) so a
+  // hard-killed serve still persists it — the dtor flush is skipped on
+  // Stop-Process. One steady_clock comparison per round; the write itself is a
+  // small (~55 KB) file truncated and re-written.
+  {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_usage_flush_ >= std::chrono::seconds(30)) {
+      last_usage_flush_ = now;
+      dump_expert_usage();
+    }
   }
   const cudaStream_t s = stream_;
   // State-carrying round: the GDN / conv / QSA-KV / PLE state accumulates across

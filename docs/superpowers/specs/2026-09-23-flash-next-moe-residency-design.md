@@ -133,3 +133,17 @@ pinned tier only for T==1 (stable routing); use pageable for prefill.
 ## Out of scope (this session)
 - MTP (Phase 2) — needs the 2.6 GB MTP head + a draft forward.
 - CPU offload of cold MoE layers (Unsloth `-ncmoe 30`) — Phase 3.
+
+## Verification (2026-09-24, model-free)
+
+H2D microbenchmark (fln_h2d_bench.cu, RTX 5090, 2,764,800 B payload,
+50 timed copies after 5 warmup):
+- pinned (cudaHostAlloc):   85.4 us/iter   (32.4 GB/s)
+- pageable (malloc, warm): 104.1 us/iter  (26.6 GB/s)
+- pinned / pageable ratio: 1.22x
+
+Interpretation: the P13 moe_expert_h2d 0.77-2.86 GB/s figure is the
+SSD-mmap COLD page-fault rate (69 GB cold-expert file), NOT the pageable-RAM
+transfer rate (warm-RAM pageable measures 26.6 GB/s here). M4 VRAM residency is
+the dominant lever (it eliminates the H2D for hot experts); M2 pinned's marginal
+RAM-transfer gain is ~1.2x - its larger value is avoiding the SSD-mmap fault.

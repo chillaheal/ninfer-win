@@ -368,7 +368,7 @@ int main(int argc, char** argv) {
     // diffed for bit-determinism (cwd-independent absolute path).
     {
       const char* out =
-          "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/p12_greedy.txt";
+          "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/p12_greedy.txt";
       std::ofstream of(out, std::ios::trunc);
       if (!of) {
         std::fprintf(stderr, "S5 WARN: could not write %s\n", out);
@@ -421,10 +421,27 @@ int main(int argc, char** argv) {
       std::printf("  bit-determinism vs post-reconstruction S5 stream: %s\n",
                   match ? "PASS" : "FAIL");
       if (!match) {
-        std::fprintf(stderr,
-                     "S5 FAIL: greedy stream diverged from the post-reconstruction S5 "
-                     "constant\n");
-        return 1;
+        // CPU-offload (NINFER_MOE_CPU_LAYERS=1) deliberately breaks bit-exactness: the
+        // CPU-routed layers use the documented host-logits approximation + CPU F32
+        // dequant/GEMM, so the greedy stream legitimately diverges from the CPU-off
+        // baseline. Relax the hard abort to a WARN so the P13-M1/M3 timing breakdowns
+        // (incl. moe_expert_h2d) still print under CPU-on.
+#pragma warning(push)
+#pragma warning(disable : 4996)  // getenv
+        const char* cpu_env = std::getenv("NINFER_MOE_CPU_LAYERS");
+#pragma warning(pop)
+        const bool cpu_on = (cpu_env != nullptr) && (cpu_env[0] != '\0') &&
+                            !(cpu_env[0] == '0' && cpu_env[1] == '\0');
+        if (cpu_on) {
+          std::printf(
+              "  (EXPECTED under NINFER_MOE_CPU_LAYERS=1; continuing to timing "
+              "breakdown)\n");
+        } else {
+          std::fprintf(stderr,
+                       "S5 FAIL: greedy stream diverged from the post-reconstruction S5 "
+                       "constant\n");
+          return 1;
+        }
       }
     }
     if (p13_timing) {
@@ -498,7 +515,7 @@ int main(int argc, char** argv) {
       // Durability: the measured report (cwd-independent absolute path).
       {
         const char* out =
-            "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/p13_timing.txt";
+            "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/p13_timing.txt";
         std::ofstream of(out, std::ios::trunc);
         if (!of) {
           std::fprintf(stderr, "P13-M1 WARN: could not write %s\n", out);
@@ -564,8 +581,16 @@ int main(int argc, char** argv) {
       // decode rounds are always within the limit.
       constexpr int kRoundCap = 1024;
       const int t_prompts[] = {512, 2048, 8192};
-      std::printf("\nP13-M3 benchmark matrix (C = 1, T_new = %d, kv = QSA bf16 / GDN fp32)\n",
-                  kTnew);
+#pragma warning(push)
+#pragma warning(disable : 4996)  // getenv
+      const char* maxtp_env = std::getenv("NINFER_P13_M3_MAXTP");
+#pragma warning(pop)
+      // Bound the matrix (default 8192 = full). A re-measure sets NINFER_P13_M3_MAXTP=512
+      // to skip the heavy 2048/8192 prefill rows (the 8192 case is what hung ~11 h),
+      // keeping a decode tok/s re-measure to a few minutes.
+      const int maxtp = (maxtp_env != nullptr) ? std::atoi(maxtp_env) : 8192;
+      std::printf("\nP13-M3 benchmark matrix (C = 1, T_new = %d, kv = QSA bf16 / GDN fp32, maxtp=%d)\n",
+                  kTnew, maxtp);
       std::printf(
           "  T_prompt  chunks  prefill_ms  prefill_tok_s  decode_ms  decode_tok_s  peak_gpu_GiB\n");
       size_t peak_inuse = 0;
@@ -590,6 +615,7 @@ int main(int argc, char** argv) {
       };
       std::vector<Row> rows;
       for (const int tp : t_prompts) {
+        if (tp > maxtp) continue;  // NINFER_P13_M3_MAXTP bound (skip heavy prefill rows)
         program.begin_sequence();
         const std::vector<std::uint32_t> prompt = make_prompt(tp, static_cast<std::uint32_t>(tp));
         device.synchronize();
@@ -643,7 +669,7 @@ int main(int argc, char** argv) {
       // Durability: the measured matrix (cwd-independent absolute path).
       {
         const char* out =
-            "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/p13_m3_matrix.txt";
+            "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/p13_m3_matrix.txt";
         std::ofstream of(out, std::ios::trunc);
         if (!of) {
           std::fprintf(stderr, "P13-M3 WARN: could not write %s\n", out);
@@ -808,7 +834,7 @@ int main(int argc, char** argv) {
                                : "(argmax MISMATCH)");
       {
         const char* out =
-            "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/p13_bwin.txt";
+            "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/p13_bwin.txt";
         std::ofstream of(out, std::ios::trunc);
         if (!of) {
           std::fprintf(stderr, "P13-BWIN WARN: could not write %s\n", out);
@@ -899,7 +925,7 @@ int main(int argc, char** argv) {
       // diverging layer. Set right before each run (the probe reads the env per
       // call and reopens "w" when the path changes).
       const char* lp_base =
-          "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/layprobe_";
+          "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/layprobe_";
       // Extra-local-index 255 on the fresh run only: it makes the fresh T=512 round
       // also dump local 255 (global 255) so the split boundary (round-1 T-1 = global
       // 255) can be compared in the same run. The split path needs no extra dump --
@@ -932,7 +958,7 @@ int main(int argc, char** argv) {
           [&](const char* name, const std::vector<float>& logits,
               const std::vector<std::uint32_t>& tokens) {
             const std::string base =
-                "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/";
+                "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/";
             {
               std::ofstream of(base + std::string(name) + "_logits.txt", std::ios::trunc);
               if (of) {
@@ -952,20 +978,20 @@ int main(int argc, char** argv) {
 #pragma warning(disable : 4996)  // _putenv_s
       if (want_fresh) {
         _putenv_s("NINFER_P13_HB",
-                  "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/"
+                  "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/"
                   "layprobe_hb_fresh.txt");
         _putenv_s("NINFER_P13_LAYPROBE", (std::string(lp_base) + "fresh.txt").c_str());
         _putenv_s("NINFER_P13_LAYPROBE_EXTRA_LOCAL", "255");
         run_prefill_and_decode(la, ta, 0);   // Path A: fresh (single begin_sequence)
       } else if (want_split) {
         _putenv_s("NINFER_P13_HB",
-                  "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/"
+                  "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/"
                   "layprobe_hb_split.txt");
         _putenv_s("NINFER_P13_LAYPROBE", (std::string(lp_base) + "split.txt").c_str());
         run_prefill_and_decode(lb, tb, kL);  // Path B: split (single begin_sequence)
       } else {
         _putenv_s("NINFER_P13_HB",
-                  "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/"
+                  "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/"
                   "layprobe_hb.txt");
         _putenv_s("NINFER_P13_LAYPROBE", (std::string(lp_base) + "fresh.txt").c_str());
         _putenv_s("NINFER_P13_LAYPROBE_EXTRA_LOCAL", "255");
@@ -1017,7 +1043,7 @@ int main(int argc, char** argv) {
                   div);
       {
         const char* out =
-            "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/"
+            "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/"
             "p13_cont_selfconsistency.txt";
         std::ofstream of(out, std::ios::trunc);
         if (!of) {
@@ -1145,7 +1171,7 @@ int main(int argc, char** argv) {
                       (dc_nan_inf == 0) && (dc_max_abs < 1e6) && (dc_max_abs >= 1e-3);
       {
         const char* out =
-            "C:/Users/Micke/Documents/Ninfer/ninfer-win/out/flash_next_dev/p13_maxctx100k.txt";
+            "C:/Users/Micke/Documents/Kodprojekt/Ninfer/ninfer-win/out/flash_next_dev/p13_maxctx100k.txt";
         std::ofstream of(out, std::ios::trunc);
         if (!of) {
           std::fprintf(stderr, "P13 100k probe WARN: could not write %s\n", out);

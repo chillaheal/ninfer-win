@@ -625,4 +625,28 @@ void sparse_moe_nvfp4(const Tensor& x, const SparseMoeNvfp4Geometry& geo,
     }
 }
 
+// P1.5.3 — run ONLY the router top-K selection on an externally-provided device
+// logits tensor [T][E] and write the per-token selected expert ids. The caller
+// (the runtime's moe_block) computes the device logits with the same real_router
+// the op uses internally, so the selection here is bit-identical to the op's own
+// GEMM top-K: one source of truth (moe_router_topk_kernel), no second
+// implementation that could drift. alpha_dev [T][K] is scratch (the kernel writes
+// the renormalized alpha there); ids_dev [T][K] comes back ascending per token.
+void sparse_moe_nvfp4_router_topk(const float* logits_dev, std::int32_t T, std::int32_t E,
+                                  std::int32_t K, std::int32_t* ids_dev, float* alpha_dev,
+                                  cudaStream_t stream) {
+    if (T <= 0 || T > 2048 || E < 1 || K <= 0 || K > 32 || logits_dev == nullptr ||
+        ids_dev == nullptr || alpha_dev == nullptr) {
+        throw std::invalid_argument("sparse_moe_nvfp4_router_topk: args out of domain");
+    }
+    const int blocks = (T + kThreads - 1) / kThreads;
+    moe_router_topk_kernel<<<blocks, kThreads, 0, stream>>>(
+        logits_dev, T, E, K, ids_dev, alpha_dev);
+    const cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        throw std::runtime_error(std::string("sparse_moe_nvfp4_router_topk launch: ") +
+                                 cudaGetErrorString(err));
+    }
+}
+
 }  // namespace ninfer::ops

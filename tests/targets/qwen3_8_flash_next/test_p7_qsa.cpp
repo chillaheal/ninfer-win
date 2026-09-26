@@ -6,11 +6,10 @@
 //                     dense-skip, T=2048)
 //  7b qsa_sparse_gqa (FP64 oracle: gather-KV attention; dense equivalence;
 //                     decode T=1 exact single-V-row proof)
-//  7c paged KV       (kv_cache_append write + one-page host demote/restore)
+//  7c paged KV       (paged BF16 K/V scatter + one-page host demote/restore)
 // Contracts: include/ninfer/ops/qsa_indexer.h, qsa_indexer_k_append.h,
 //            qsa_sparse_gqa.h.
 
-#include <ninfer/ops/kv_cache_append.h>
 #include <ninfer/ops/qsa_indexer.h>
 #include <ninfer/ops/qsa_indexer_k_append.h>
 #include <ninfer/ops/qsa_sparse_gqa.h>
@@ -655,9 +654,10 @@ struct StoreBuilder {
 
 // QSA store geometry: 64-token pages, page-major [256, 64, KV, P] planes,
 // K + V (two {BF16, 256, KV, 256} planes). PageMajor is the canonical
-// paged_kv_element_offset layout: it is what kv_cache_append (host
-// require_shape) and the GQA gather both address, and the host replica
-// path treats a page as a contiguous first * nb[3] block in that order.
+// paged_kv_element_offset layout: it is what the production paged append
+// (detail::real_kv_append) and the GQA gather both address, and the host
+// replica path treats a page as a contiguous first * nb[3] block in that
+// order.
 StoreBuilder plan_store(std::uint32_t physical_pages, std::uint32_t logical_pages,
                         int kv_heads) {
   KVPageGeometry geom;
@@ -772,25 +772,40 @@ void verdict(const std::string& label, const std::vector<double>& got,
                                ReductionCriterion{4.1e-3, 5e-6, 5.5e-3});
 }
 
-// kv_cache_append at sequential positions 0..n-1 into the store planes.
+// Paged QSA pool append: the production write semantics
+// (detail::real_kv_append) — the QSA pool holds BF16 K AND V, which the
+// shared kv_cache_append op cannot express (its BFloat16 mode requires V
+// in FP16). Scatter k/v at positions 0..T-1 into the page-major
+// [256, 64, KV, P] planes through the block table (host replica of the
+// kernel's offset formula), then H2D the full planes.
 void append_store(const std::vector<float>& k, const std::vector<float>& v, int KV,
                   int T, const Tensor& bt, const Tensor& kpg, const Tensor& vpg) {
-  DeviceBuffer dk   = to_device_bf16(k);
-  DeviceBuffer dv   = to_device_bf16(v);
-  std::vector<int> pos(T);
-  fill_iota_i32(pos, 0);
-  DeviceBuffer dpos = to_device_i32(pos);
-  Tensor K(dk.p, DType::BF16, {256, KV, T});
-  Tensor V(dv.p, DType::BF16, {256, KV, T});
-  Tensor POS(dpos.p, DType::I32, {T});
-  PagedKVLayerView view;
-  view.k_pages      = kpg;
-  view.v_pages      = vpg;
-  view.block_table  = bt;
-  view.head_dim     = 256;
-  view.num_kv_heads = KV;
-  view.dtype        = DType::BF16;
-  kv_cache_append(K, V, POS, view, nullptr);
+  const std::int64_t P  = bt.numel();
+  const std::int64_t D  = 256, SZ = 64;
+  const std::int64_t plane = kpg.numel();
+  const std::vector<int> bth = from_device<int>(bt.data, static_cast<std::size_t>(P));
+  std::vector<std::uint16_t> kh(static_cast<std::size_t>(plane), 0),
+      vh(static_cast<std::size_t>(plane), 0);
+  for (int p = 0; p < T; ++p) {
+    const int page = bth[static_cast<std::size_t>(p >> 6)];
+    const int off  = p & 63;
+    for (int g = 0; g < KV; ++g) {
+      const std::int64_t base =
+          D * SZ * (static_cast<std::int64_t>(g) + static_cast<std::int64_t>(KV) * page) +
+          D * off;
+      for (int d = 0; d < D; ++d) {
+        const std::size_t src = static_cast<std::size_t>(d) + D * (g + KV * p);
+        kh[static_cast<std::size_t>(base + d)] = f32_to_bf16(k[src]);
+        vh[static_cast<std::size_t>(base + d)] = f32_to_bf16(v[src]);
+      }
+    }
+  }
+  cuda_check(cudaMemcpy(kpg.data, kh.data(), static_cast<std::size_t>(plane) * 2,
+                        cudaMemcpyHostToDevice),
+             "append_store k H2D");
+  cuda_check(cudaMemcpy(vpg.data, vh.data(), static_cast<std::size_t>(plane) * 2,
+                        cudaMemcpyHostToDevice),
+             "append_store v H2D");
   cuda_synchronize();
 }
 
@@ -835,7 +850,18 @@ struct Store {
 
 }  // namespace
 
+int main_body();
+
 int main() {
+  try {
+    return main_body();
+  } catch (const std::exception& e) {
+    std::cerr << "P7 EXCEPTION: " << e.what() << "\n";
+    return 2;
+  }
+}
+
+int main_body() {
   if (cuda_unavailable()) {
     std::cout << "SKIP: no usable CUDA device\n";
     return 77;

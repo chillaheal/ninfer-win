@@ -19,6 +19,7 @@ target_sources(ninfer_engine PRIVATE
   impl/runtime/pressure_planning.cpp
   impl/runtime/program.cpp
   impl/runtime/real_program.cpp
+  impl/runtime/cpu_moe.cpp
   impl/runtime/leaves/mini_attn.cu
   impl/runtime/leaves/mini_layout.cu
   impl/runtime/leaves/mini_linear.cu
@@ -28,6 +29,12 @@ target_sources(ninfer_engine PRIVATE
   impl/load/bindings.cpp
   impl/load/real_bindings.cpp
   impl/load/real_loader.cpp)
+# P3.2 CPU MoE: host-only TU, AVX2 FMA dots (the rest of the target stays at
+# the x64 baseline; the code falls back to scalar fmaf without __AVX2__).
+if(MSVC)
+  set_source_files_properties(impl/runtime/cpu_moe.cpp PROPERTIES
+    COMPILE_FLAGS "/arch:AVX2")
+endif()
 target_include_directories(ninfer_engine PRIVATE
   impl
   export)

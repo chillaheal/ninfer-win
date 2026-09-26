@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +30,7 @@
 #include "core/device.h"
 #include "ninfer/ops/ngram_embedding.h"
 #include "ninfer/ops/qsa_indexer_k_append.h"
+#include "targets/qwen3_8_flash_next/impl/runtime/cpu_moe.h"
 #include "targets/qwen3_8_flash_next/impl/runtime/real_model_view.h"
 
 namespace ninfer::targets::qwen3_8_flash_next {
@@ -408,6 +410,33 @@ class RealProgram {
   // (NINFER_EXPERT_USAGE_FILE, default in the CWD) so the most-active experts are
   // inspectable across runs.
   std::vector<std::uint64_t> expert_usage_;
+  // Last time expert_usage_ was flushed to disk. Set to now() at construction so
+  // the first periodic flush lands ~30 s into the run (never an empty early
+  // overwrite of a prior run's seed file); run_round re-flushes at least every
+  // ~30 s so a hard-killed serve still leaves a current file.
+  std::chrono::steady_clock::time_point last_usage_flush_{};
+
+  // P3.3 — CPU offload of the coldest MoE layers (Unsloth -ncmoe style). Gated by
+  // NINFER_MOE_CPU_LAYERS (non-empty, non-"0"); routes the fixed coldest-30/48
+  // table to the CPU NVFP4 GEMM (CpuMoe). moe_cpu_layer_[l] = 1 routes layer l to
+  // the CPU. For a CPU layer the shared expert planes + shared_gate are D2H'd once
+  // at init into moe_cpu_state_[l] (the shared planes live only in the device
+  // arena); the routed planes stay host mmap and are read via moe_cpu_w_[l]'s
+  // per-expert stride (view_.routed_host[l]). moe_cpu_x_/y_ are round scratch
+  // (xhat D2H / y H2D), token-major [T][G::kHidden] BF16. moe_cpu_ = the one
+  // shared CpuMoe instance. Off by default -> zero behavior change.
+  bool moe_cpu_enabled_ = false;
+  std::vector<std::uint8_t> moe_cpu_layer_;  // [G::kNumLayers] 0/1
+  std::vector<CpuMoeWeights> moe_cpu_w_;     // [G::kNumLayers]
+  struct CpuMoeLayerState {
+    std::vector<std::uint8_t> shared_gu_codes, shared_gu_scales;
+    std::vector<std::uint8_t> shared_dn_codes, shared_dn_scales;
+    std::vector<std::uint16_t> shared_gate;  // [G::kHidden] BF16
+  };
+  std::vector<CpuMoeLayerState> moe_cpu_state_;  // [G::kNumLayers]
+  std::vector<std::uint16_t> moe_cpu_x_;  // round scratch (xhat D2H)
+  std::vector<std::uint16_t> moe_cpu_y_;  // round scratch (y H2D)
+  std::unique_ptr<CpuMoe> moe_cpu_;
 
   cudaStream_t stream_ = nullptr;
   ops::NgramRequestState ple_state_;
@@ -436,6 +465,7 @@ class RealProgram {
   void barrier_begin();
   void barrier_end();
   void finalize_round();
+  void init_moe_cpu_offload();
   Timer timer_;
   RoundTimings timings_;
   bool timings_enabled_ = false;
