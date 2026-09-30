@@ -80,8 +80,7 @@ void set_status(HWND hwnd, const wchar_t* text) {
 // overrides a default only when its INI key is present; save_settings writes
 // the current value of every Core control.
 // ---------------------------------------------------------------------------
-void load_settings() {
-    HWND hwnd = ::GetActiveWindow();
+void load_settings(HWND hwnd) {
     const std::wstring path = settings_path();
     if (hwnd == nullptr || path.empty()) { return; }
 
@@ -137,8 +136,7 @@ void load_settings() {
     load_edit(IDC_REQUEST_LOG_EDIT, L"request_log");
 }
 
-void save_settings() {
-    HWND hwnd = ::GetActiveWindow();
+void save_settings(HWND hwnd) {
     const std::wstring path = settings_path();
     if (hwnd == nullptr || path.empty()) { return; }
 
@@ -350,7 +348,7 @@ void create_core_controls(HWND hwnd) {
 
 void create_scaffold(HWND hwnd) {
     create_core_controls(hwnd);
-    load_settings();  // override the defaults above with any saved values
+    load_settings(hwnd);  // override the defaults above with any saved values
     create_status(hwnd);
 }
 
@@ -358,7 +356,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_COMMAND:
         if (LOWORD(wParam) == IDCANCEL) { ::PostQuitMessage(0); }
-        if (HIWORD(wParam) == EN_KILLFOCUS) { save_settings(); }
+        if (HIWORD(wParam) == EN_KILLFOCUS) { save_settings(hwnd); }
         return 0;
     case WM_SIZE: {
         HWND status = ::GetDlgItem(hwnd, IDC_STATUS);
@@ -370,7 +368,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_CLOSE:
-        save_settings();
+        save_settings(hwnd);
         ::DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
