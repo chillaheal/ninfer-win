@@ -60,6 +60,23 @@ constexpr int IDC_STOP_BUTTON               = 127;
 constexpr int IDC_STATUS                    = 128;  // STATIC status line (SS_NOTIFY)
 constexpr int IDC_USAGE_TEXT                = 129;  // read-only usage block (D11)
 
+// Extended section (below Core): serve tuning flags. Empty edits and
+// unchecked boxes are omitted from the serve argv (engine defaults apply).
+constexpr int IDC_MODEL_ID_EDIT             = 200;
+constexpr int IDC_MAX_CONCURRENCY_EDIT      = 201;
+constexpr int IDC_THINK_BUDGET_MSG_EDIT     = 202;
+constexpr int IDC_THINK_BUDGET_POLICY_COMBO = 203;  // strict | clamp | ignore
+constexpr int IDC_MAX_THINK_BUDGET_EDIT     = 204;
+constexpr int IDC_MEDIA_CACHE_EDIT          = 205;
+constexpr int IDC_MEDIA_LIVE_EDIT           = 206;
+constexpr int IDC_MEDIA_PREPROC_THREADS_EDIT = 207;
+constexpr int IDC_PREFILL_CHUNK_EDIT        = 208;
+constexpr int IDC_CORS_CHECK                = 209;
+constexpr int IDC_API_KEY_EDIT              = 210;
+constexpr int IDC_NO_CUDA_GRAPH_CHECK       = 211;
+constexpr int IDC_LOG_LEVEL_COMBO           = 212;  // error | warn | info | debug
+constexpr int IDC_USAGE_CHUNK_CHOICE_CHECK  = 213;
+
 // Posted by the serve watcher thread when the child process exits;
 // wParam: the exit code.
 constexpr UINT WM_APP_DONE = WM_APP + 1;
@@ -262,6 +279,34 @@ std::vector<std::wstring> build_serve_argv(HWND h, const std::wstring& model) {
     const bool req_log_on =
         ::SendMessageW(GetDlgItem(h, IDC_REQUEST_LOG_EDIT), BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (req_log_on) { a.push_back(L"--request-log-jsonl"); a.push_back(L"requests.jsonl"); }
+    // Extended controls (empty edits / unchecked boxes are omitted).
+    const std::wstring model_id = g(IDC_MODEL_ID_EDIT);
+    if (!model_id.empty()) { a.push_back(L"--model-id"); a.push_back(model_id); }
+    const std::wstring max_conc = g(IDC_MAX_CONCURRENCY_EDIT);
+    if (!max_conc.empty()) { a.push_back(L"--max-concurrency"); a.push_back(max_conc); }
+    const std::wstring think_msg = g(IDC_THINK_BUDGET_MSG_EDIT);
+    if (!think_msg.empty()) { a.push_back(L"--thinking-budget-message"); a.push_back(think_msg); }
+    const std::wstring think_policy = combo_text(h, IDC_THINK_BUDGET_POLICY_COMBO);
+    if (!think_policy.empty()) { a.push_back(L"--thinking-budget-policy"); a.push_back(think_policy); }
+    const std::wstring max_think = g(IDC_MAX_THINK_BUDGET_EDIT);
+    if (!max_think.empty()) { a.push_back(L"--max-thinking-budget"); a.push_back(max_think); }
+    const std::wstring media_cache = g(IDC_MEDIA_CACHE_EDIT);
+    if (!media_cache.empty()) { a.push_back(L"--media-cache-mib"); a.push_back(media_cache); }
+    const std::wstring media_live = g(IDC_MEDIA_LIVE_EDIT);
+    if (!media_live.empty()) { a.push_back(L"--media-live-mib"); a.push_back(media_live); }
+    const std::wstring media_threads = g(IDC_MEDIA_PREPROC_THREADS_EDIT);
+    if (!media_threads.empty()) { a.push_back(L"--media-preprocess-threads"); a.push_back(media_threads); }
+    const std::wstring prefill = g(IDC_PREFILL_CHUNK_EDIT);
+    if (!prefill.empty()) { a.push_back(L"--prefill-chunk"); a.push_back(prefill); }
+    if (::SendMessageW(GetDlgItem(h, IDC_CORS_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) { a.push_back(L"--cors"); }
+    const std::wstring api_key = g(IDC_API_KEY_EDIT);
+    if (!api_key.empty()) { a.push_back(L"--api-key"); a.push_back(api_key); }
+    if (::SendMessageW(GetDlgItem(h, IDC_NO_CUDA_GRAPH_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) { a.push_back(L"--no-cuda-graph"); }
+    const std::wstring log_level = combo_text(h, IDC_LOG_LEVEL_COMBO);
+    if (!log_level.empty()) { a.push_back(L"--log-level"); a.push_back(log_level); }
+    if (::SendMessageW(GetDlgItem(h, IDC_USAGE_CHUNK_CHOICE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        a.push_back(L"--usage-chunk-choice");
+    }
     return a;
 }
 
@@ -696,6 +741,21 @@ void load_settings(HWND hwnd) {
     load_edit(IDC_SEED_EDIT, L"seed");
     load_check(IDC_PRESERVE_THINKING_CHECK, L"preserve_thinking", 1);
     load_check(IDC_REQUEST_LOG_EDIT, L"request_log", 1);
+    // Extended controls.
+    load_edit(IDC_MODEL_ID_EDIT, L"model_id");
+    load_edit(IDC_MAX_CONCURRENCY_EDIT, L"max_concurrency");
+    load_edit(IDC_THINK_BUDGET_MSG_EDIT, L"think_budget_message");
+    load_combo(IDC_THINK_BUDGET_POLICY_COMBO, L"think_budget_policy", 1);  // clamp
+    load_edit(IDC_MAX_THINK_BUDGET_EDIT, L"max_thinking_budget");
+    load_edit(IDC_MEDIA_CACHE_EDIT, L"media_cache");
+    load_edit(IDC_MEDIA_LIVE_EDIT, L"media_live");
+    load_edit(IDC_MEDIA_PREPROC_THREADS_EDIT, L"media_preprocess_threads");
+    load_edit(IDC_PREFILL_CHUNK_EDIT, L"prefill_chunk");
+    load_check(IDC_CORS_CHECK, L"cors", 0);
+    load_edit(IDC_API_KEY_EDIT, L"api_key");
+    load_check(IDC_NO_CUDA_GRAPH_CHECK, L"no_cuda_graph", 0);
+    load_combo(IDC_LOG_LEVEL_COMBO, L"log_level", 2);  // info
+    load_check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"usage_chunk_choice", 0);
 }
 
 void save_settings(HWND hwnd) {
@@ -744,6 +804,21 @@ void save_settings(HWND hwnd) {
     save_edit(IDC_SEED_EDIT, L"seed");
     save_check(IDC_PRESERVE_THINKING_CHECK, L"preserve_thinking");
     save_check(IDC_REQUEST_LOG_EDIT, L"request_log");
+    // Extended controls.
+    save_edit(IDC_MODEL_ID_EDIT, L"model_id");
+    save_edit(IDC_MAX_CONCURRENCY_EDIT, L"max_concurrency");
+    save_edit(IDC_THINK_BUDGET_MSG_EDIT, L"think_budget_message");
+    save_combo(IDC_THINK_BUDGET_POLICY_COMBO, L"think_budget_policy");
+    save_edit(IDC_MAX_THINK_BUDGET_EDIT, L"max_thinking_budget");
+    save_edit(IDC_MEDIA_CACHE_EDIT, L"media_cache");
+    save_edit(IDC_MEDIA_LIVE_EDIT, L"media_live");
+    save_edit(IDC_MEDIA_PREPROC_THREADS_EDIT, L"media_preprocess_threads");
+    save_edit(IDC_PREFILL_CHUNK_EDIT, L"prefill_chunk");
+    save_check(IDC_CORS_CHECK, L"cors");
+    save_edit(IDC_API_KEY_EDIT, L"api_key");
+    save_check(IDC_NO_CUDA_GRAPH_CHECK, L"no_cuda_graph");
+    save_combo(IDC_LOG_LEVEL_COMBO, L"log_level");
+    save_check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"usage_chunk_choice");
 }
 
 // ---------------------------------------------------------------------------
@@ -908,8 +983,107 @@ void create_core_controls(HWND hwnd) {
     ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
 }
 
+// Extended section (below the Core block + usage): serve tuning flags. Two
+// columns (label x=8 / x=380, controls x=132 / x=510), rows every 30 px
+// starting at y=496. The think-budget-message edit is full-width so its
+// long default is visible. Defaults come from the canonical config; empty
+// edits and unchecked boxes are omitted from the serve argv.
+void create_extended_controls(HWND hwnd) {
+    const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+
+    auto label = [&](const wchar_t* text, int x, int y) {
+        HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                   x, y, 120, 18, hwnd, nullptr,
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    };
+    auto edit = [&](int id, const wchar_t* text, int x, int y, int w) {
+        HWND e = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text,
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                   x, y, w, 22, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        return e;
+    };
+    auto combo = [&](int id, int x, int y, int w, const wchar_t* const* items, int count) {
+        HWND c = ::CreateWindowExW(0, L"COMBOBOX", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                                   x, y, w, 200, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        for (int i = 0; i < count; ++i) {
+            ::SendMessageW(c, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(items[i]));
+        }
+        ::SendMessageW(c, CB_SETCURSEL, 0, 0);
+        return c;
+    };
+    auto check = [&](int id, const wchar_t* text, int x, int y, int w, bool checked) {
+        HWND c = ::CreateWindowExW(0, L"BUTTON", text,
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                                   x, y, w, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
+        return c;
+    };
+
+    // Section header.
+    label(L"Extended:", 8, 466);
+
+    // E-row 1: model id + prefill chunk
+    label(L"Model ID:", 8, 498);
+    edit(IDC_MODEL_ID_EDIT, L"", 132, 496, 120);
+    label(L"Prefill chunk:", 380, 498);
+    edit(IDC_PREFILL_CHUNK_EDIT, L"", 510, 496, 80);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PREFILL_CHUNK_EDIT), L"4096");
+
+    // E-row 2: max concurrency + api key
+    label(L"Max concurrency:", 8, 528);
+    edit(IDC_MAX_CONCURRENCY_EDIT, L"", 132, 526, 80);
+    label(L"API key:", 380, 528);
+    edit(IDC_API_KEY_EDIT, L"", 510, 526, 180);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONCURRENCY_EDIT), L"2");
+
+    // E-row 3: think budget message (full-width for the long default)
+    label(L"Think budget msg:", 8, 558);
+    edit(IDC_THINK_BUDGET_MSG_EDIT, L"", 132, 556, 558);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_THINK_BUDGET_MSG_EDIT),
+                     L"Considering the limited time available to the user, I must stop thinking now. Time to act:");
+
+    // E-row 4: think budget policy + log level
+    label(L"Think policy:", 8, 588);
+    static const wchar_t* const kThinkPolicies[] = {L"strict", L"clamp", L"ignore"};
+    combo(IDC_THINK_BUDGET_POLICY_COMBO, 132, 586, 100, kThinkPolicies, 3);
+    ::SendMessageW(::GetDlgItem(hwnd, IDC_THINK_BUDGET_POLICY_COMBO), CB_SETCURSEL, 1, 0);  // clamp
+    label(L"Log level:", 380, 588);
+    static const wchar_t* const kLogLevels[] = {L"error", L"warn", L"info", L"debug"};
+    combo(IDC_LOG_LEVEL_COMBO, 510, 586, 100, kLogLevels, 4);
+    ::SendMessageW(::GetDlgItem(hwnd, IDC_LOG_LEVEL_COMBO), CB_SETCURSEL, 2, 0);  // info
+
+    // E-row 5: max thinking budget + cors
+    label(L"Max think budget:", 8, 618);
+    edit(IDC_MAX_THINK_BUDGET_EDIT, L"", 132, 616, 80);
+    check(IDC_CORS_CHECK, L"CORS", 510, 616, 120, false);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_THINK_BUDGET_EDIT), L"4096");
+
+    // E-row 6: media cache + no cuda graph
+    label(L"Media cache (MiB):", 8, 648);
+    edit(IDC_MEDIA_CACHE_EDIT, L"", 132, 646, 80);  // empty (flag omitted)
+    check(IDC_NO_CUDA_GRAPH_CHECK, L"No CUDA graph", 510, 646, 150, false);
+
+    // E-row 7: media live + usage chunk choice
+    label(L"Media live (MiB):", 8, 678);
+    edit(IDC_MEDIA_LIVE_EDIT, L"", 132, 676, 80);  // empty (flag omitted)
+    check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"Usage chunk choice", 510, 676, 160, false);
+
+    // E-row 8: media preprocess threads
+    label(L"Media preproc thr:", 8, 708);
+    edit(IDC_MEDIA_PREPROC_THREADS_EDIT, L"", 132, 706, 80);  // empty (flag omitted)
+}
+
 void create_scaffold(HWND hwnd) {
     create_core_controls(hwnd);
+    create_extended_controls(hwnd);
     load_settings(hwnd);  // override the defaults above with any saved values
     create_status(hwnd);
     create_usage_block(hwnd);
