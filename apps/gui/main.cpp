@@ -115,6 +115,12 @@ constexpr int IDC_ADV_GROUP                   = 328;  // "Advanced" group box
 // in the compact view). They are handed out sequentially in creation order.
 constexpr int IDC_ADV_LABEL_BASE              = 400;  // 24 labels: 400..423
 
+// Sampling preset buttons (sit in the right margin of the sampling rows);
+// 130-131 are the first IDs free after the Core block (400..423 are the
+// Advanced labels).
+constexpr int IDC_PRESET_THINKING             = 130;
+constexpr int IDC_PRESET_INSTRUCT             = 131;
+
 // Posted by the serve watcher thread when the child process exits;
 // wParam: the exit code.
 constexpr UINT WM_APP_DONE = WM_APP + 1;
@@ -405,6 +411,22 @@ std::vector<std::wstring> build_serve_argv(HWND h, const std::wstring& model) {
         a.push_back(L"--tolerant-tool-calls");
     }
     return a;
+}
+
+// A sampling preset fills exactly the five sampling edits; it leaves the
+// greedy / thinking checkboxes, the vision + spec combos, and every other
+// control untouched. "Thinking" (the on-launch defaults) reverts the fields.
+void apply_preset(HWND hwnd, bool thinking) {
+    static const wchar_t* const kValues[2][5] = {
+        {L"1.0", L"0.95", L"20", L"0.0", L"0.0"},  // Thinking
+        {L"0.7", L"0.80", L"20", L"0.0", L"1.5"},  // Instruct
+    };
+    static const int kIds[5] = {IDC_TEMPERATURE_EDIT, IDC_TOPP_EDIT,
+                                IDC_TOPK_EDIT, IDC_MINP_EDIT, IDC_PRESENCE_EDIT};
+    const wchar_t* const* v = kValues[thinking ? 0 : 1];
+    for (int i = 0; i < 5; ++i) {
+        ::SetWindowTextW(::GetDlgItem(hwnd, kIds[i]), v[i]);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,6 +1125,12 @@ void create_core_controls(HWND hwnd) {
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PRESENCE_EDIT), L"0.0");
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_FREQUENCY_EDIT), L"0.0");
 
+    // Sampling presets: the right margin (x=600) of the sampling rows is
+    // free (the right-column edits end at x=580), so the pair stacks beside
+    // the fields they set.
+    button(IDC_PRESET_THINKING, L"Thinking", 600, 160, 80);
+    button(IDC_PRESET_INSTRUCT, L"Instruct", 600, 194, 80);
+
     // Row 9: behavior toggles (the check text is its own label)
     check(IDC_GREEDY_CHECK, L"Greedy", 132, 250, 120, false);
     check(IDC_THINKING_CHECK, L"Thinking", 270, 250, 120, true);
@@ -1604,6 +1632,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (LOWORD(wParam) == IDC_STOP_BUTTON && HIWORD(wParam) == BN_CLICKED) {
             stop_serve(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_PRESET_THINKING && HIWORD(wParam) == BN_CLICKED) {
+            apply_preset(hwnd, true);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_PRESET_INSTRUCT && HIWORD(wParam) == BN_CLICKED) {
+            apply_preset(hwnd, false);
             return 0;
         }
         if (LOWORD(wParam) == IDC_ADV_TOGGLE_CHECK && HIWORD(wParam) == BN_CLICKED) {
