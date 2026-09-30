@@ -1650,6 +1650,90 @@ void create_advanced_controls(HWND hwnd) {
     set_advanced_visible(hwnd, false);
 }
 
+// ---------------------------------------------------------------------------
+// Tooltips: one TOOLTIPS_CLASS3 child on the main window, one TTM_ADDTOOL per
+// control. Each tool is keyed by its child HWND (TTF_SUBCLASS sublasses the
+// child so the tooltip manager sees its WM_MOUSEMOVE), so hidden controls can
+// still carry a tooltip. The tooltip window itself (ID 1600) is never given
+// one.
+// ---------------------------------------------------------------------------
+struct ToolTipRow {
+    int id;
+    const wchar_t* text;
+};
+
+// The current Windows SDK (10.0.26100.0) no longer declares the TOOLTEXT
+// structure, yet comctl32's TTM_ADDTOOL still expects this exact layout at
+// runtime. Declare it here (classic member order) so the message is well-formed.
+struct ToolTextW {
+    UINT         cbSize;
+    HWND         hwnd;
+    UINT         uId;
+    RECT         rect;
+    HICON        hIcon;
+    UINT_PTR     uFlags;
+    const wchar_t* lpszText;
+    LPARAM       lParam;
+};
+
+void create_tooltips(HWND hMain) {
+    static const ToolTipRow kRows[] = {
+        { IDC_MODEL_EDIT,                L"the .ninfer model to load (filename next to the launcher)." },
+        { IDC_HOST_EDIT,                 L"address the server listens on (default `127.0.0.1`, local only)." },
+        { IDC_PORT_EDIT,                 L"TCP port the server listens on (default `8888`)." },
+        { IDC_MAX_NEW_EDIT,              L"maximum output tokens per request." },
+        { IDC_MAX_CONTEXT_EDIT,          L"total context length in tokens (prompt + output)." },
+        { IDC_KV_CAPACITY_EDIT,          L"KV-cache token budget, or `auto` to size it to VRAM." },
+        { IDC_KV_DTYPE_COMBO,            L"precision of the KV cache (lower precision = more fits)." },
+        { IDC_TEMPERATURE_EDIT,          L"sampling temperature (`0` = greedy)." },
+        { IDC_TOPP_EDIT,                 L"nucleus sampling threshold." },
+        { IDC_TOPK_EDIT,                 L"keep only the top-k candidates." },
+        { IDC_MINP_EDIT,                 L"drop tokens whose probability is below a fraction of the top one." },
+        { IDC_PRESENCE_EDIT,             L"bias against repeating tokens already present." },
+        { IDC_FREQUENCY_EDIT,            L"bias against repeating tokens in proportion to how often they appear." },
+        { IDC_DEFAULT_THINK_BUDGET_EDIT, L"tokens the model may spend reasoning per request." },
+        { IDC_REQUEST_LOG_EDIT,          L"log each request to `requests.jsonl` (also powers the usage readout below)." },
+        { IDC_DRAFT_TOKENS_EDIT,         L"speculative-decoding tokens per step (higher = faster, needs more VRAM)." },
+        { IDC_LM_HEAD_DRAFT_CHECK,       L"use the main LM head for drafting (better drafts, slight cost)." },
+        { IDC_THINKING_CHECK,            L"enable the model's reasoning mode." },
+        { IDC_PRESERVE_THINKING_CHECK,   L"keep reasoning tokens in the output." },
+        { IDC_VISION_COMBO,              L"how images are processed: Off (no vision), On-GPU, or Offload." },
+        { IDC_SPEC_COMBO,                L"speculative-decoding method (e.g. `dflash2`)." },
+        { IDC_GREEDY_CHECK,              L"force deterministic greedy decoding (overrides temperature)." },
+        { IDC_SEED_EDIT,                 L"RNG seed for reproducible sampling (empty = random)." },
+        { IDC_HEADROOM_EDIT,             L"safety reserve the auto/probe path keeps free (only used when KV capacity is `auto`)." },
+        { IDC_LAUNCH_BUTTON,             L"start `ninfer-serve.exe` with these settings." },
+        { IDC_STOP_BUTTON,               L"stop the running server." },
+        { IDC_PROBE_BUTTON,              L"check how much context fits (does not change any setting)." },
+        { IDC_AUTO_CONTEXT_BTN,          L"probe and fill Max context (and raise KV capacity if it is below the fit)." },
+        { IDC_MAX_CONCURRENCY_EDIT,      L"how many requests to serve at once." },
+        { IDC_PREFILL_CHUNK_EDIT,        L"tokens of prompt processed per prefill step." },
+        { IDC_MAX_THINK_BUDGET_EDIT,     L"hard ceiling on reasoning tokens per request." },
+        { IDC_THINK_BUDGET_MSG_EDIT,     L"text appended when the thinking budget is reached." },
+        { IDC_THINK_BUDGET_POLICY_COMBO, L"how an over-budget reasoning request is handled: `strict` / `clamp` / `ignore`." },
+        { IDC_HOST_CACHE_MIB_EDIT,       L"host (CPU) memory for the KV host tier (offload)." },
+        { IDC_PREFIX_CACHE_FILE_EDIT,    L"file to persist the host-tier prefix cache." },
+        { IDC_NGRAM_DRAFT_EDIT,          L"n-gram speculative tokens per step (needs concurrency 1 above 15)." },
+        { IDC_NGRAM_MIN_MATCH_EDIT,      L"minimum matching prefix length for n-gram drafting." },
+    };
+
+    HWND hTip = ::CreateWindowExW(WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, L"",
+                                   WS_CHILD | WS_POPUP, 0, 0, 0, 0, hMain,
+                                   (HMENU)1600, ::GetModuleHandleW(nullptr), nullptr);
+    if (hTip == nullptr) { return; }
+    for (const ToolTipRow& row : kRows) {
+        const HWND hCtl = ::GetDlgItem(hMain, row.id);
+        if (hCtl == nullptr) { continue; }
+        ToolTextW tt {};
+        tt.cbSize   = sizeof(ToolTextW);
+        tt.hwnd     = hCtl;
+        tt.uId      = static_cast<UINT>(row.id);
+        tt.uFlags   = TTF_SUBCLASS;
+        tt.lpszText = row.text;
+        ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&tt));
+    }
+}
+
 void create_scaffold(HWND hwnd) {
     create_core_controls(hwnd);
     create_extended_controls(hwnd);
@@ -1664,6 +1748,7 @@ void create_scaffold(HWND hwnd) {
             == BST_CHECKED);
     create_status(hwnd);
     create_usage_block(hwnd);
+    create_tooltips(hwnd);  // after every control (core/extended/advanced) exists
 }
 
 // ---------------------------------------------------------------------------
@@ -1969,7 +2054,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int nCmdShow) {
-    INITCOMMONCONTROLSEX icc { sizeof(icc), ICC_STANDARD_CLASSES };
+    INITCOMMONCONTROLSEX icc { sizeof(icc), ICC_STANDARD_CLASSES | ICC_BAR_CLASSES };
     ::InitCommonControlsEx(&icc);
 
     WNDCLASSEXW wc { sizeof(wc) };
