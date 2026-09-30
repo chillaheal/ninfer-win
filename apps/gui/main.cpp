@@ -331,31 +331,42 @@ void usage_scan(HWND hwnd) {
                             const std::string line =
                                 chunk.substr(line_pos, nl - line_pos);
                             line_pos = nl + 1;
-                            nlohmann::json record;
-                            try { record = nlohmann::json::parse(line); }
-                            catch (const nlohmann::json::exception&) { continue; }
-                            if (record.value("event", std::string()) !=
-                                    "request_done" ||
-                                !record.contains("result") ||
-                                !record.contains("timings_seconds")) { continue; }
-                            const nlohmann::json& result  = record["result"];
-                            const nlohmann::json& timings = record["timings_seconds"];
-                            const std::uint64_t computed =
-                                result.value("computed_prefill_tokens", 0ULL);
-                            const std::uint64_t out =
-                                result.value("completion_tokens", 0ULL);
-                            const double decode_s = timings.value("decode", 0.0);
-                            const std::uint64_t ts_ms =
-                                record.value("timestamp_unix_ms", 0ULL);
-                            const std::time_t ts =
-                                static_cast<std::time_t>(ts_ms / 1000);
-                            UsageDay& day =
-                                g_usage.by_day[usage_day_key_local(ts)];
-                            day.completion_tokens += out;
-                            day.requests += 1;
-                            if (ts > 0) {
-                                g_usage.recent.push_back(
-                                    {ts, computed, out, decode_s});
+                            try {
+                                nlohmann::json record =
+                                    nlohmann::json::parse(line);
+                                if (record.value("event", std::string()) !=
+                                        "request_done" ||
+                                    !record.contains("result") ||
+                                    !record.contains("timings_seconds")) {
+                                    continue;
+                                }
+                                const nlohmann::json& result  =
+                                    record["result"];
+                                const nlohmann::json& timings =
+                                    record["timings_seconds"];
+                                const std::uint64_t computed =
+                                    result.value("computed_prefill_tokens",
+                                                 0ULL);
+                                const std::uint64_t out =
+                                    result.value("completion_tokens", 0ULL);
+                                const double decode_s =
+                                    timings.value("decode", 0.0);
+                                const std::uint64_t ts_ms =
+                                    record.value("timestamp_unix_ms", 0ULL);
+                                const std::time_t ts =
+                                    static_cast<std::time_t>(ts_ms / 1000);
+                                UsageDay& day =
+                                    g_usage.by_day[usage_day_key_local(ts)];
+                                day.completion_tokens += out;
+                                day.requests += 1;
+                                if (ts > 0) {
+                                    g_usage.recent.push_back(
+                                        {ts, computed, out, decode_s});
+                                }
+                            } catch (const nlohmann::json::exception&) {
+                                // A malformed or mistyped line must not take
+                                // down the timer loop: skip it, advance on.
+                                continue;
                             }
                         }
                         offset += line_pos;
@@ -420,7 +431,7 @@ void usage_scan(HWND hwnd) {
         static_cast<double>(rate.computed_prefill_tokens) /
         static_cast<double>(kUsageRateWindowSec)));
     // "\u00b7" is the middle dot as a universal char name: source stays
-    // ASCII while the literal renders as "·" regardless of file encoding.
+    // ASCII while the literal still renders as a middle dot at runtime.
     const std::wstring text =
         L"Usage:  today " + usage_fmt_tokens(today.completion_tokens) +
         L" tok   week " + usage_fmt_tokens(week.completion_tokens) +
