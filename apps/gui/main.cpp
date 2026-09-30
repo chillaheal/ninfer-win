@@ -4,8 +4,6 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <winhttp.h>
-#include <tchar.h>
-#include <tlhelp32.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1028,30 +1026,6 @@ void stop_serve(HWND hwnd) {
     }
 }
 
-// Terminate every ninfer engine process (ninfer-serve.exe) in any session so
-// no orphaned GPU work lingers after this GUI closes. Main-window only.
-void kill_all_ninfer_engines() {
-    const wchar_t* names[] = {L"ninfer-serve.exe"};
-    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) { return; }
-
-    PROCESSENTRY32W entry {};
-    entry.dwSize = sizeof(entry);
-    if (::Process32FirstW(snapshot, &entry)) {
-        do {
-            for (const wchar_t* name : names) {
-                if (_wcsicmp(entry.szExeFile, name) != 0) { continue; }
-                HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
-                if (process != nullptr) {
-                    ::TerminateProcess(process, 1);
-                    ::CloseHandle(process);
-                }
-            }
-        } while (::Process32NextW(snapshot, &entry));
-    }
-    ::CloseHandle(snapshot);
-}
-
 // WinHttp GET: short timeout, local HTTP only. Any failure collapses to an
 // empty body, so a closed port never hangs the UI.
 std::string http_get(const std::wstring& host, const std::wstring& port, const std::string& path) {
@@ -1115,10 +1089,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_TIMER:
         if (wParam == kHealthTimerId) {
-            // One-shot up-check: the serve is reachable (or this tick raced the
-            // exit); either way the poll stops here.
-            ::KillTimer(hwnd, kHealthTimerId);
+            // Poll /health until it answers: model + KV-pool load takes
+            // several seconds, so keep ticking while the body is empty.
+            // Only stop when the serve reports up; a dead child ends the
+            // poll via WM_APP_DONE (and WM_CLOSE kills the timer too).
             if (!http_get(g_serve_host, g_serve_port, "/health").empty()) {
+                ::KillTimer(hwnd, kHealthTimerId);
                 set_status(hwnd, L"Serve up on " + g_serve_host + L":" + g_serve_port);
             }
             return 0;
