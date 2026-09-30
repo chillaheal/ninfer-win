@@ -1665,6 +1665,7 @@ struct ToolTipRow {
 void create_tooltips(HWND hMain) {
     static const ToolTipRow kRows[] = {
         { IDC_MODEL_EDIT,                L"the `.ninfer` model to load (filename next to the launcher)." },
+        { IDC_MODEL_BROWSE,              L"pick the `.ninfer` model file to load." },
         { IDC_HOST_EDIT,                 L"address the server listens on (default `127.0.0.1`, local only)." },
         { IDC_PORT_EDIT,                 L"TCP port the server listens on (default `8888`)." },
         { IDC_MAX_NEW_EDIT,              L"maximum output tokens per request." },
@@ -1675,6 +1676,8 @@ void create_tooltips(HWND hMain) {
         { IDC_TOPP_EDIT,                 L"nucleus sampling threshold." },
         { IDC_TOPK_EDIT,                 L"keep only the top-k candidates." },
         { IDC_MINP_EDIT,                 L"drop tokens whose probability is below a fraction of the top one." },
+        { IDC_PRESET_THINKING,           L"revert the sampling fields to the on-launch thinking defaults." },
+        { IDC_PRESET_INSTRUCT,           L"fill the sampling fields with the instruct preset." },
         { IDC_PRESENCE_EDIT,             L"bias against repeating tokens already present." },
         { IDC_FREQUENCY_EDIT,            L"bias against repeating tokens in proportion to how often they appear." },
         { IDC_DEFAULT_THINK_BUDGET_EDIT, L"tokens the model may spend reasoning per request." },
@@ -1692,32 +1695,62 @@ void create_tooltips(HWND hMain) {
         { IDC_STOP_BUTTON,               L"stop the running server." },
         { IDC_PROBE_BUTTON,              L"check how much context fits (does not change any setting)." },
         { IDC_AUTO_CONTEXT_BTN,          L"probe and fill Max context (and raise KV capacity if it is below the fit)." },
+        { IDC_MODEL_ID_EDIT,             L"model name the server reports (overrides the artifact metadata)." },
         { IDC_MAX_CONCURRENCY_EDIT,      L"how many requests to serve at once." },
+        { IDC_API_KEY_EDIT,              L"API key required on every request (empty = no key)." },
         { IDC_PREFILL_CHUNK_EDIT,        L"tokens of prompt processed per prefill step." },
         { IDC_MAX_THINK_BUDGET_EDIT,     L"hard ceiling on reasoning tokens per request." },
+        { IDC_CORS_CHECK,                L"send permissive CORS headers so browser UIs can call the server." },
+        { IDC_MEDIA_CACHE_EDIT,          L"retained decoded-media cache in MiB (default `1024`; `0` disables)." },
+        { IDC_NO_CUDA_GRAPH_CHECK,       L"disable CUDA-graph decode rounds (on by default)." },
+        { IDC_MEDIA_LIVE_EDIT,           L"cap on live BF16 patch payloads in MiB (default `2048`)." },
+        { IDC_USAGE_CHUNK_CHOICE_CHECK,  L"give the streamed usage chunk a zero-delta choice so strict parsers accept it." },
+        { IDC_MEDIA_PREPROC_THREADS_EDIT, L"media decode/preprocess worker threads (`0` = auto; max `64`)." },
+        { IDC_LOG_LEVEL_COMBO,           L"stderr log verbosity (`error` / `warn` / `info` / `debug`)." },
         { IDC_THINK_BUDGET_MSG_EDIT,     L"text appended when the thinking budget is reached." },
         { IDC_THINK_BUDGET_POLICY_COMBO, L"how an over-budget reasoning request is handled: `strict` / `clamp` / `ignore`." },
+        { IDC_ADV_TOGGLE_CHECK,          L"show the advanced tuning group below." },
         { IDC_HOST_CACHE_MIB_EDIT,       L"host (CPU) memory for the KV host tier (offload)." },
         { IDC_PREFIX_CACHE_FILE_EDIT,    L"file to persist the host-tier prefix cache." },
+        { IDC_USE_ORIG_PREFIX_CHECK,     L"use the original (legacy) prefix-caching system; the rows below it require it." },
+        { IDC_MAX_SHARED_PREFIXES_EDIT,  L"cap on shared prefix catalogs (original prefix caching)." },
+        { IDC_MAX_PRIVATE_CONT_EDIT,     L"cap on private continuation catalogs (original prefix caching)." },
+        { IDC_LONG_ANCHOR_SPACING_EDIT,  L"minimum tokens between long anchors (default `1024`; `0` anchors every boundary)." },
+        { IDC_MAX_LONG_ANCHORS_EDIT,     L"message-boundary anchors per continuation (default `4`)." },
+        { IDC_HOST_KV_MIB_EDIT,          L"host KV cache in MiB (original prefix caching; default `8192`)." },
+        { IDC_HOST_STATE_SLOTS_EDIT,     L"host checkpoint slots (original prefix caching; default `8`)." },
+        { IDC_DEV_SNAP_SLOTS_EDIT,       L"device state snapshot slots (default concurrency + `1`; `+2` without a host tier)." },
+        { IDC_DEV_STATE_SLOTS_EDIT,      L"extra device checkpoint slots beyond the active lanes (default = max concurrency)." },
         { IDC_NGRAM_DRAFT_EDIT,          L"n-gram speculative tokens per step (needs concurrency 1 above 15)." },
         { IDC_NGRAM_MIN_MATCH_EDIT,      L"minimum matching prefix length for n-gram drafting." },
+        { IDC_NGRAM_NATIVE_CHECK,        L"retain n-gram sources across compaction (needs the archive size above)." },
+        { IDC_NGRAM_ARCHIVE_MIB_EDIT,    L"MiB of retained source archive for n-gram drafting." },
+        { IDC_NGRAM_SESSION_MIB_EDIT,    L"session-scoped n-gram source budget in MiB (default `128`; used only with an archive)." },
+        { IDC_CACHE_TAP_LADDER_EDIT,     L"ladder base in tokens for the hybrid prefix cache's history snapshots." },
+        { IDC_CACHE_TAP_MIN_GAP_EDIT,    L"minimum tokens between the hybrid prefix cache's ladder snapshots." },
+        { IDC_CACHE_TAPS_PER_REQ_EDIT,   L"new prefill snapshots taken per request (default `8`; `2` without a host tier)." },
+        { IDC_RESP_STORE_MAX_RECORDS_EDIT, L"record cap for the Responses-API state store (default `1024`)." },
+        { IDC_RESP_STORE_MAX_MIB_EDIT,   L"byte cap in MiB for the Responses-API state store (default `256`)." },
+        { IDC_MAX_REQUEST_MIB_EDIT,      L"max request body size in MiB (default `384`)." },
+        { IDC_MAX_PENDING_REQ_EDIT,      L"max queued requests (default `16`)." },
+        { IDC_PENDING_TIMEOUT_MS_EDIT,   L"queue timeout in milliseconds (default `30000`)." },
+        { IDC_CHAT_TEMPLATE_EDIT,        L"file that replaces the artifact's chat template at startup." },
+        { IDC_CONTEXT_COST_PRESETS_EDIT, L"runtime context-cost preset file (overrides the compiled-in values)." },
+        { IDC_TOLERANT_TOOL_CALLS_CHECK, L"leniently recover malformed tool calls (strict all-or-nothing by default)." },
     };
 
-    // The tooltip common control must NOT be created with WS_CHILD|WS_POPUP (an
-    // invalid combination that makes the class reject creation and return NULL);
-    // use TTS_ALWAYSTIP, matching the reference launcher. The common-control
-    // tooltip class is L"tooltip" (TOOLTIPS_CLASSW) on most builds, but some
-    // comctl32 builds register it as L"tooltips_class32"; try the documented
-    // name first and fall back so tooltips work on either (a failed CreateWindowExW
-    // with an unknown class is clean, so the fallback is safe).
+    // The tooltip common control must NOT be created with WS_CHILD|WS_POPUP:
+    // that combination is invalid, the class rejects it, and CreateWindowExW
+    // returns NULL, and it must not pass an hMenu. The real historical failure
+    // on this machine was exactly those two things (bad style + a bogus
+    // (HMENU)1600), so this call uses no window style and a nullptr menu;
+    // TTS_ALWAYSTIP is the only style. In the Windows SDK TOOLTIPS_CLASSW is
+    // L"tooltips_class32", so there is no alternative class name to fall back
+    // to: one CreateWindowExW is all there is. The strings in kRows are
+    // process-lifetime literals, so the lpszText pointers below stay valid.
     HWND hTip = ::CreateWindowExW(0, TOOLTIPS_CLASSW, L"",
                                    TTS_ALWAYSTIP, 0, 0, 0, 0, hMain,
                                    nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    if (hTip == nullptr) {
-        hTip = ::CreateWindowExW(0, L"tooltips_class32", L"",
-                                  TTS_ALWAYSTIP, 0, 0, 0, 0, hMain,
-                                  nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    }
     if (hTip == nullptr) { return; }
     ::SendMessageW(hTip, TTM_SETMAXTIPWIDTH, 380, 0);
     for (const ToolTipRow& row : kRows) {
