@@ -574,9 +574,16 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
     si.hStdError  = err_write;
 
     std::wstring mutable_command = command_line;
+    // Run the probe from the exe dir like the serve launch does, so a
+    // bare-filename model artifact resolves no matter where the GUI was
+    // started from. CreateProcessW may modify lpCurrentDirectory, so work
+    // on a copy.
+    std::wstring current_dir = module_dir();
     PROCESS_INFORMATION pi {};
     if (!::CreateProcessW(cli.c_str(), mutable_command.data(), nullptr, nullptr, TRUE,
-                          CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+                          CREATE_NO_WINDOW,
+                          current_dir.empty() ? nullptr : current_dir.data(),
+                          nullptr, &si, &pi)) {
         ::CloseHandle(out_read); ::CloseHandle(out_write);
         ::CloseHandle(err_read); ::CloseHandle(err_write);
         set_status(hwnd, L"Error: failed to start the VRAM probe");
@@ -2120,8 +2127,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // leaves orphaned GPU work behind.
         if (g_child.running.load()) {
             if (g_child.process != nullptr) { ::TerminateProcess(g_child.process, 1); }
-            if (g_child.watcher.joinable()) { g_child.watcher.join(); }
         }
+        // Join the watcher whenever it is joinable: after the child has
+        // already exited (Stop clicked, crash) running is false, but the
+        // completed-but-joinable thread would std::terminate in its
+        // destructor when wWinMain returns.
+        if (g_child.watcher.joinable()) { g_child.watcher.join(); }
         ::DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
