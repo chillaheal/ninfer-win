@@ -1662,23 +1662,9 @@ struct ToolTipRow {
     const wchar_t* text;
 };
 
-// The current Windows SDK (10.0.26100.0) no longer declares the TOOLTEXT
-// structure, yet comctl32's TTM_ADDTOOL still expects this exact layout at
-// runtime. Declare it here (classic member order) so the message is well-formed.
-struct ToolTextW {
-    UINT         cbSize;
-    HWND         hwnd;
-    UINT         uId;
-    RECT         rect;
-    HICON        hIcon;
-    UINT_PTR     uFlags;
-    const wchar_t* lpszText;
-    LPARAM       lParam;
-};
-
 void create_tooltips(HWND hMain) {
     static const ToolTipRow kRows[] = {
-        { IDC_MODEL_EDIT,                L"the .ninfer model to load (filename next to the launcher)." },
+        { IDC_MODEL_EDIT,                L"the `.ninfer` model to load (filename next to the launcher)." },
         { IDC_HOST_EDIT,                 L"address the server listens on (default `127.0.0.1`, local only)." },
         { IDC_PORT_EDIT,                 L"TCP port the server listens on (default `8888`)." },
         { IDC_MAX_NEW_EDIT,              L"maximum output tokens per request." },
@@ -1724,13 +1710,13 @@ void create_tooltips(HWND hMain) {
     for (const ToolTipRow& row : kRows) {
         const HWND hCtl = ::GetDlgItem(hMain, row.id);
         if (hCtl == nullptr) { continue; }
-        ToolTextW tt {};
-        tt.cbSize   = sizeof(ToolTextW);
-        tt.hwnd     = hCtl;
-        tt.uId      = static_cast<UINT>(row.id);
-        tt.uFlags   = TTF_SUBCLASS;
-        tt.lpszText = row.text;
-        ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&tt));
+        TOOLINFO ti {};
+        ti.cbSize   = sizeof(ti);
+        ti.uFlags   = TTF_SUBCLASS;
+        ti.hwnd     = hCtl;
+        ti.uId      = static_cast<UINT_PTR>(row.id);
+        ti.lpszText = const_cast<LPWSTR>(row.text);  // control copies the string; never writes through it
+        ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&ti));
     }
 }
 
