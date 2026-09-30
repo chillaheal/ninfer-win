@@ -344,9 +344,9 @@ int main(int argc, char** argv) {
                       << "kv_capacity_mode=" << format_kv_capacity_mode(memory.kv_capacity_mode) << '\n'
                       << "effective_max_context=" << memory.max_context << '\n'
                       << "kv_cache_dtype=" << format_kv_cache(memory.kv_cache) << '\n';
-        #ifdef NINFER_BUILD_ID
+#ifdef NINFER_BUILD_ID
             std::cout << "build_id=" << NINFER_BUILD_ID << '\n';
-        #endif
+#endif
             return 0;
         }
 

@@ -318,15 +318,13 @@ Options parse_options(int argc, char** argv) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
     }
     if (vram_headroom_mib.has_value()) {
-        if (options.kv_capacity.mode != KvCapacityMode::Automatic) {
+        if (options.kv_capacity.mode != KvCapacityMode::Automatic && !options.probe) {
             throw std::invalid_argument("--vram-headroom-mib requires --kv-capacity auto");
         }
         options.kv_capacity = KvCapacityPolicy::automatic(*vram_headroom_mib << 20);
     }
     if (options.probe && options.kv_capacity.mode != KvCapacityMode::Automatic) {
-        options.kv_capacity = vram_headroom_mib
-            ? KvCapacityPolicy::automatic(*vram_headroom_mib << 20)
-            : KvCapacityPolicy::automatic();
+        options.kv_capacity = KvCapacityPolicy::automatic();
     }
 
     const bool has_prompt   = !options.prompt.empty();
