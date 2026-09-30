@@ -289,12 +289,15 @@ int main(int argc, char** argv) {
     ninfer::product::StartupLogRenderer startup_log(logging);
 
     try {
-        ninfer::PromptInput input =
-            cli.messages_path.empty()
-                ? ninfer::product::prompt_from_text(cli.prompt, cli.enable_thinking)
-                : ninfer::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
-                                                        cli.enable_vision);
-        input.options.reasoning_effort = cli.reasoning_effort;
+        ninfer::PromptInput input;
+        if (!cli.probe) {
+            input =
+                cli.messages_path.empty()
+                    ? ninfer::product::prompt_from_text(cli.prompt, cli.enable_thinking)
+                    : ninfer::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
+                                                            cli.enable_vision);
+            input.options.reasoning_effort = cli.reasoning_effort;
+        }
 
         ninfer::RequestOptions request;
         request.execution.sampling                = cli.sampling;
@@ -331,6 +334,21 @@ int main(int argc, char** argv) {
         ninfer::Engine engine(std::move(engine_options));
         startup_log.engine_ready(engine.load_summary());
         engine.reset_memory_peaks();
+
+        if (cli.probe) {
+            const ninfer::MemorySummary memory = engine.memory_summary();
+            std::cout << "probe=ok\n"
+                      << "kv_fit_tokens=" << memory.kv_capacity << '\n'
+                      << "vram_free_after_weights_bytes="
+                      << memory.available_after_weights_bytes << '\n'
+                      << "kv_capacity_mode=" << format_kv_capacity_mode(memory.kv_capacity_mode) << '\n'
+                      << "effective_max_context=" << memory.max_context << '\n'
+                      << "kv_cache_dtype=" << format_kv_cache(memory.kv_cache) << '\n';
+        #ifdef NINFER_BUILD_ID
+            std::cout << "build_id=" << NINFER_BUILD_ID << '\n';
+        #endif
+            return 0;
+        }
 
         ninfer::PreparedPrompt prompt = engine.prepare(std::move(input));
 

@@ -117,6 +117,9 @@ std::string usage_text(const char* argv0) {
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB headroom; configurable\n"
            "                           via --vram-headroom-mib)\n"
+           "  --probe                Load the artifact, resolve automatic KV capacity\n"
+           "                           for --kv-dtype, print kv_fit_tokens= and\n"
+           "                           vram_free_after_weights_bytes=, and exit.\n"
            "  --vram-headroom-mib N    VRAM headroom in MiB left by --kv-capacity auto\n"
            "                           (default " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
@@ -189,6 +192,8 @@ Options parse_options(int argc, char** argv) {
 
         if (arg == "--prompt") {
             options.prompt = value(arg);
+        } else if (arg == "--probe") {
+            options.probe = true;
         } else if (arg == "--chat-template") {
             options.chat_template_path = value(arg);
         } else if (arg == "--messages") {
@@ -318,10 +323,15 @@ Options parse_options(int argc, char** argv) {
         }
         options.kv_capacity = KvCapacityPolicy::automatic(*vram_headroom_mib << 20);
     }
+    if (options.probe && options.kv_capacity.mode != KvCapacityMode::Automatic) {
+        options.kv_capacity = vram_headroom_mib
+            ? KvCapacityPolicy::automatic(*vram_headroom_mib << 20)
+            : KvCapacityPolicy::automatic();
+    }
 
     const bool has_prompt   = !options.prompt.empty();
     const bool has_messages = !options.messages_path.empty();
-    if (has_prompt == has_messages) {
+    if (!options.probe && has_prompt == has_messages) {
         throw std::invalid_argument("pass exactly one of --prompt or --messages");
     }
     if (options.prefill_chunk % 128 != 0) {
