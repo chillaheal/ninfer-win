@@ -7,7 +7,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <cwchar>
 #include <ctime>
 #include <deque>
@@ -115,11 +117,12 @@ constexpr int IDC_ADV_GROUP                   = 328;  // "Advanced" group box
 // in the compact view). They are handed out sequentially in creation order.
 constexpr int IDC_ADV_LABEL_BASE              = 400;  // 24 labels: 400..423
 
-// Sampling preset buttons (sit in the right margin of the sampling rows);
-// 130-131 are the first IDs free after the Core block (400..423 are the
-// Advanced labels).
+// Sampling preset buttons (sit in the right margin of the sampling rows) and
+// the Auto-context button on the max-context row; 130-132 are the first IDs
+// free after the Core block (400..423 are the Advanced labels).
 constexpr int IDC_PRESET_THINKING             = 130;
 constexpr int IDC_PRESET_INSTRUCT             = 131;
+constexpr int IDC_AUTO_CONTEXT_BTN            = 132;
 
 // Posted by the serve watcher thread when the child process exits;
 // wParam: the exit code.
@@ -427,6 +430,203 @@ void apply_preset(HWND hwnd, bool thinking) {
     for (int i = 0; i < 5; ++i) {
         ::SetWindowTextW(::GetDlgItem(hwnd, kIds[i]), v[i]);
     }
+}
+
+// ---------------------------------------------------------------------------
+// VRAM probe. Runs the sibling CLI in --probe mode, which loads the model
+// weights (~32 GiB) and reports the KV fit ceiling: the largest KV capacity
+// that fits current free VRAM. Because of the weight load the probe is
+// expensive and only runs on the explicit Probe / Auto buttons -- never on
+// Launch (which would otherwise load the model a second time before serving).
+// The Probe button is informational: it never mutates a control.
+// ---------------------------------------------------------------------------
+
+// Read an edit as a non-negative integer; std::nullopt for a blank or
+// non-numeric field (kv-capacity "auto" is not a number).
+std::optional<std::uint64_t> parse_uint_field(HWND hwnd, int id) {
+    const std::wstring text = get_control_text(::GetDlgItem(hwnd, id));
+    if (text.empty()) { return std::nullopt; }
+    for (wchar_t ch : text) {
+        if (ch < L'0' || ch > L'9') { return std::nullopt; }
+    }
+    try { return std::stoull(text); }
+    catch (const std::out_of_range&) { return std::nullopt; }
+}
+
+// Cached VRAM probe: the last probe key and its KV fit ceiling in tokens, plus
+// the free VRAM after the weight load for the status line. The key combines
+// the model with every control the probe forwards, so re-probing only happens
+// when one of them changes (a ~32 GiB load), which is what keeps a second
+// Probe click instant.
+std::wstring g_probe_key;
+std::uint32_t g_probe_fit = 0;
+std::uint64_t g_probe_free_after_bytes = 0;
+
+// Read a pipe to EOF into a UTF-8 string. Probe output is a handful of lines,
+// so one-shot sequential reads are safe (well under the 4 KiB pipe buffer).
+std::string read_pipe_all(HANDLE read_end) {
+    std::string out;
+    char chunk[4096];
+    for (;;) {
+        DWORD got = 0;
+        if (!::ReadFile(read_end, chunk, sizeof(chunk), &got, nullptr) || got == 0) { break; }
+        out.append(chunk, got);
+    }
+    return out;
+}
+
+std::wstring format_gib(std::uint64_t bytes) {
+    wchar_t buffer[32];
+    ::swprintf(buffer, std::size(buffer), L"%.2f GiB",
+               static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
+    return buffer;
+}
+
+// Extract an unsigned value following `key` in a "key=value" line of probe output.
+// Returns 0 when the key is absent or the value is malformed (failures surface via status).
+std::uint64_t parse_probe_field(const std::string& text, const char* key) {
+    const auto pos = text.find(key);
+    if (pos == std::string::npos) { return 0; }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long value = std::strtoull(text.c_str() + pos + std::char_traits<char>::length(key), &end, 10);
+    if (errno == ERANGE || end == text.c_str() + pos + std::char_traits<char>::length(key)) { return 0; }
+    return static_cast<std::uint64_t>(value);
+}
+
+// Synchronously launch the sibling CLI in probe mode and return the KV fit
+// ceiling (tokens) for the current free VRAM. The probe always runs in
+// auto-KV mode, so the fit is a VRAM ceiling, not capped by --max-context.
+// The forwarded sizing flags mirror build_serve_argv so the ceiling matches
+// the launch; --max-context and --kv-capacity are deliberately NOT forwarded.
+// Returns 0 on failure -- the status line carries the reason.
+std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring& key) {
+    const std::wstring cli = find_sibling(L"ninfer.exe");
+    if (cli.empty()) {
+        set_status(hwnd, L"Error: ninfer.exe not found next to ninfer-gui.exe");
+        return 0;
+    }
+
+    const int vision   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    const int kv_idx   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_GETCURSEL, 0, 0));
+    const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    const std::wstring draft = get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT));
+    const bool lm_head_draft =
+        ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    std::vector<std::wstring> args { cli, model, L"--probe" };
+    if (vision >= 1) { args.push_back(L"--vision"); }
+    if (vision == 2) { args.push_back(L"--vision-offload"); args.push_back(L"on"); }
+    static const wchar_t* kKvDtypes[] = {L"bf16", L"int8", L"fp8", L"nvfp4", L"k8v4"};
+    if (kv_idx >= 0) { args.push_back(L"--kv-dtype"); args.push_back(kKvDtypes[kv_idx]); }
+    static const wchar_t* kSpecs[] = {L"", L"mtp", L"dflash", L"dflash2"};
+    if (spec_idx > 0) {
+        args.push_back(L"--spec"); args.push_back(kSpecs[spec_idx]);
+        if (!draft.empty()) { args.push_back(L"--draft-tokens"); args.push_back(draft); }
+        if (lm_head_draft) { args.push_back(L"--lm-head-draft"); }
+    }
+    const std::wstring prefill = get_control_text(GetDlgItem(hwnd, IDC_PREFILL_CHUNK_EDIT));
+    if (!prefill.empty()) { args.push_back(L"--prefill-chunk"); args.push_back(prefill); }
+    const std::wstring ngram_draft = get_control_text(GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT));
+    if (!ngram_draft.empty()) { args.push_back(L"--ngram-draft-tokens"); args.push_back(ngram_draft); }
+    const std::wstring ngram_match = get_control_text(GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT));
+    if (!ngram_match.empty()) { args.push_back(L"--ngram-min-match"); args.push_back(ngram_match); }
+    const std::wstring headroom = get_control_text(GetDlgItem(hwnd, IDC_HEADROOM_EDIT));
+    if (!headroom.empty()) {
+        const std::optional<std::uint64_t> headroom_mib = parse_uint_field(hwnd, IDC_HEADROOM_EDIT);
+        if (headroom_mib && *headroom_mib > 0) {
+            args.push_back(L"--vram-headroom-mib"); args.push_back(headroom);
+        }
+    }
+    const std::wstring command_line = build_command_line(args);
+
+    SECURITY_ATTRIBUTES sa {};
+    sa.nLength        = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE out_read = nullptr, out_write = nullptr, err_read = nullptr, err_write = nullptr;
+    if (!::CreatePipe(&out_read, &out_write, &sa, 0) || !::CreatePipe(&err_read, &err_write, &sa, 0)) {
+        set_status(hwnd, L"Error: could not create probe pipes");
+        return 0;
+    }
+
+    STARTUPINFOW si {};
+    si.cb         = sizeof(si);
+    si.dwFlags    = STARTF_USESTDHANDLES;
+    si.hStdOutput = out_write;
+    si.hStdError  = err_write;
+
+    std::wstring mutable_command = command_line;
+    PROCESS_INFORMATION pi {};
+    if (!::CreateProcessW(cli.c_str(), mutable_command.data(), nullptr, nullptr, TRUE,
+                          CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        ::CloseHandle(out_read); ::CloseHandle(out_write);
+        ::CloseHandle(err_read); ::CloseHandle(err_write);
+        set_status(hwnd, L"Error: failed to start the VRAM probe");
+        return 0;
+    }
+    ::CloseHandle(pi.hThread);
+    // Drop the write ends so the readers observe EOF.
+    ::CloseHandle(out_write);
+    ::CloseHandle(err_write);
+
+    const std::string stdout_text = read_pipe_all(out_read);
+    const std::string stderr_text = read_pipe_all(err_read);
+    ::WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 0;
+    ::GetExitCodeProcess(pi.hProcess, &exit_code);
+    ::CloseHandle(out_read);
+    ::CloseHandle(err_read);
+    ::CloseHandle(pi.hProcess);
+
+    if (exit_code != 0) {
+        set_status(hwnd, L"Probe failed (exit " + std::to_wstring(exit_code) + L"): " +
+                           utf8_to_wide(stderr_text));
+        return 0;
+    }
+
+    const std::uint64_t fit      = parse_probe_field(stdout_text, "kv_fit_tokens=");
+    const std::uint64_t free_after = parse_probe_field(stdout_text, "vram_free_after_weights_bytes=");
+    if (fit == 0) {
+        set_status(hwnd, L"Probe returned no KV fit: " + utf8_to_wide(stderr_text));
+        return 0;
+    }
+
+    g_probe_key = key;
+    g_probe_fit = static_cast<std::uint32_t>(fit);
+    g_probe_free_after_bytes = free_after;
+    set_status(hwnd, L"~" + std::to_wstring(fit) + L" tokens fit (free after weights: " +
+                           format_gib(free_after) + L")");
+    return g_probe_fit;
+}
+
+// The probe cache key: the model plus every control the probe forwards, so a
+// changed key means a different probe command line (and a re-probe).
+std::wstring build_probe_key(HWND hwnd, const std::wstring& model) {
+    const int vision   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    const int kv_idx   = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_GETCURSEL, 0, 0));
+    const int spec_idx = static_cast<int>(::SendMessageW(GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    const bool lm_head_draft =
+        ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    std::wstring key = model;
+    key.push_back(L'\x01'); key.append(std::to_wstring(vision));
+    key.push_back(L'\x01'); key.append(std::to_wstring(kv_idx));
+    key.push_back(L'\x01'); key.append(std::to_wstring(spec_idx));
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT)));
+    key.push_back(L'\x01'); key.push_back(lm_head_draft ? L'1' : L'0');
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_PREFILL_CHUNK_EDIT)));
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT)));
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT)));
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_HEADROOM_EDIT)));
+    return key;
+}
+
+// Return the cached probe fit for the current (model, sizing controls),
+// re-probing when any part of the key changed.
+std::uint32_t ensure_probe(HWND hwnd, const std::wstring& model) {
+    const std::wstring key = build_probe_key(hwnd, model);
+    if (key == g_probe_key && g_probe_fit > 0) { return g_probe_fit; }
+    set_status(hwnd, L"Measuring VRAM...");
+    ::UpdateWindow(hwnd);
+    return run_probe(hwnd, model, key);
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,9 +1270,12 @@ void create_core_controls(HWND hwnd) {
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MODEL_EDIT),
                      L"qwen3_8_27b_nvfp4 23,7gb.ninfer");
 
-    // Row 2: context sizing
+    // Row 2: context sizing. The Auto button fills the max-context field
+    // with the probed VRAM fit ceiling (beside the edit: 232..292, clear of
+    // the "Max new:" label at x=380).
     label(L"Max context:", 8, 42);
     edit(IDC_MAX_CONTEXT_EDIT, L"", 132, 40, 90);
+    button(IDC_AUTO_CONTEXT_BTN, L"Auto", 232, 40, 60);
     label(L"Max new:", 380, 42);
     edit(IDC_MAX_NEW_EDIT, L"", 510, 40, 80);
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"200000");
@@ -1474,7 +1677,8 @@ void create_scaffold(HWND hwnd) {
 // directly -- unsloth-style. Disable Launch / enable Stop, start the ~1 s
 // /health poll, and reap the child on a watcher thread that posts
 // WM_APP_DONE.
-void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv) {
+void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv,
+                  std::wstring_view extra_status = {}) {
     // Reap a previous run's watcher thread: it stays joinable after posting
     // WM_APP_DONE, and assigning a new joinable thread to g_child.watcher would
     // std::terminate.
@@ -1506,7 +1710,9 @@ void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv) {
 
     ::EnableWindow(::GetDlgItem(hwnd, IDC_LAUNCH_BUTTON), FALSE);
     ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), TRUE);
-    set_status(hwnd, L"Serving \u2014 waiting for /health\u2026");
+    std::wstring status = L"Serving \u2014 waiting for /health\u2026";
+    if (!extra_status.empty()) { status += L' '; status += extra_status; }
+    set_status(hwnd, status);
     ::SetTimer(hwnd, kHealthTimerId, 1000, nullptr);
 
     g_child.watcher = std::thread([hwnd] {
@@ -1557,8 +1763,29 @@ void serve_child(HWND hwnd) {
     g_serve_host = host.empty() ? std::wstring(L"127.0.0.1") : host;
     g_serve_port = port;
 
+    // The probe never runs here (it would load the ~32 GiB of weights before
+    // serving). The manual values launch as-is, with one hard invariant:
+    // a sequence context cannot exceed the KV pool, so clamp the max-context
+    // edit down to a numeric kv-capacity when it exceeds it.
+    std::wstring extra_status;
+    const std::optional<std::uint64_t> max_ctx = parse_uint_field(hwnd, IDC_MAX_CONTEXT_EDIT);
+    const std::optional<std::uint64_t> kv_cap  = parse_uint_field(hwnd, IDC_KV_CAPACITY_EDIT);
+    if (max_ctx && kv_cap && *max_ctx > *kv_cap) {
+        ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), std::to_wstring(*kv_cap).c_str());
+        extra_status += L"max-context clamped to kv-capacity " + std::to_wstring(*kv_cap) + L"; ";
+    }
+    // Read-only probe-cache check (never a re-probe): warn when the manual
+    // context exceeds the last probed ceiling; the launch still honors the
+    // manual value -- the user takes responsibility for it.
+    if (build_probe_key(hwnd, model) == g_probe_key && g_probe_fit > 0 &&
+        max_ctx && *max_ctx > g_probe_fit) {
+        extra_status = L"manual max-context " + std::to_wstring(*max_ctx) +
+                       L" > probed fit " + std::to_wstring(g_probe_fit) + L" \u2014 launching anyway; " +
+                       extra_status;
+    }
+
     const std::vector<std::wstring> argv = build_serve_argv(hwnd, model);
-    launch_serve(hwnd, argv);
+    launch_serve(hwnd, argv, extra_status);
 }
 
 // Stop the serve this GUI launched (its terminal window dies); the GUI stays
@@ -1628,6 +1855,46 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (LOWORD(wParam) == IDC_LAUNCH_BUTTON && HIWORD(wParam) == BN_CLICKED &&
             !g_child.running.load()) {
             serve_child(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_PROBE_BUTTON && HIWORD(wParam) == BN_CLICKED) {
+            const std::wstring model = get_control_text(::GetDlgItem(hwnd, IDC_MODEL_EDIT));
+            if (model.empty()) {
+                set_status(hwnd, L"Error: choose a model artifact (.ninfer)");
+                return 0;
+            }
+            // Informational only: show the VRAM ceiling; never change a
+            // control. On a cache hit re-assert the ceiling (run_probe only
+            // sets the status on a fresh probe); on failure run_probe has
+            // already reported the reason.
+            const std::uint32_t fit = ensure_probe(hwnd, model);
+            if (fit > 0) {
+                set_status(hwnd, L"~" + std::to_wstring(fit) + L" tokens fit (free after weights: " +
+                               format_gib(g_probe_free_after_bytes) + L")");
+            }
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_AUTO_CONTEXT_BTN && HIWORD(wParam) == BN_CLICKED) {
+            const std::wstring model = get_control_text(::GetDlgItem(hwnd, IDC_MODEL_EDIT));
+            if (model.empty()) {
+                set_status(hwnd, L"Error: choose a model artifact (.ninfer)");
+                return 0;
+            }
+            // Fill the max-context field with the probed ceiling. On failure
+            // (fit == 0) run_probe has already reported the reason, so leave
+            // both fields untouched.
+            const std::uint32_t fit = ensure_probe(hwnd, model);
+            if (fit > 0) {
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT),
+                                 std::to_wstring(fit).c_str());
+                // Keep max-context <= kv-capacity: a fixed pool below the
+                // ceiling is bumped up to the fit.
+                const std::optional<std::uint64_t> kv_cap = parse_uint_field(hwnd, IDC_KV_CAPACITY_EDIT);
+                if (kv_cap && *kv_cap < fit) {
+                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT),
+                                     std::to_wstring(fit).c_str());
+                }
+            }
             return 0;
         }
         if (LOWORD(wParam) == IDC_STOP_BUTTON && HIWORD(wParam) == BN_CLICKED) {
