@@ -1651,11 +1651,11 @@ void create_advanced_controls(HWND hwnd) {
 }
 
 // ---------------------------------------------------------------------------
-// Tooltips: one TOOLTIPS_CLASS3 child on the main window, one TTM_ADDTOOL per
-// control. Each tool is keyed by its child HWND (TTF_SUBCLASS sublasses the
-// child so the tooltip manager sees its WM_MOUSEMOVE), so hidden controls can
-// still carry a tooltip. The tooltip window itself (ID 1600) is never given
-// one.
+// Tooltips: one tooltip common control owned by the main window, one
+// TTM_ADDTOOL per control. Each tool uses TTF_IDISHWND: the main window is
+// the tool owner and the child control's HWND is the tool id, so the manager
+// shows the tip when the mouse is over that child (matches the reference
+// launcher). The tooltip control window itself is never given a tool.
 // ---------------------------------------------------------------------------
 struct ToolTipRow {
     int id;
@@ -1703,18 +1703,31 @@ void create_tooltips(HWND hMain) {
         { IDC_NGRAM_MIN_MATCH_EDIT,      L"minimum matching prefix length for n-gram drafting." },
     };
 
-    HWND hTip = ::CreateWindowExW(WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, L"",
-                                   WS_CHILD | WS_POPUP, 0, 0, 0, 0, hMain,
-                                   (HMENU)1600, ::GetModuleHandleW(nullptr), nullptr);
+    // The tooltip common control must NOT be created with WS_CHILD|WS_POPUP (an
+    // invalid combination that makes the class reject creation and return NULL);
+    // use TTS_ALWAYSTIP, matching the reference launcher. The common-control
+    // tooltip class is L"tooltip" (TOOLTIPS_CLASSW) on most builds, but some
+    // comctl32 builds register it as L"tooltips_class32"; try the documented
+    // name first and fall back so tooltips work on either (a failed CreateWindowExW
+    // with an unknown class is clean, so the fallback is safe).
+    HWND hTip = ::CreateWindowExW(0, TOOLTIPS_CLASSW, L"",
+                                   TTS_ALWAYSTIP, 0, 0, 0, 0, hMain,
+                                   nullptr, ::GetModuleHandleW(nullptr), nullptr);
+    if (hTip == nullptr) {
+        hTip = ::CreateWindowExW(0, L"tooltips_class32", L"",
+                                  TTS_ALWAYSTIP, 0, 0, 0, 0, hMain,
+                                  nullptr, ::GetModuleHandleW(nullptr), nullptr);
+    }
     if (hTip == nullptr) { return; }
+    ::SendMessageW(hTip, TTM_SETMAXTIPWIDTH, 380, 0);
     for (const ToolTipRow& row : kRows) {
         const HWND hCtl = ::GetDlgItem(hMain, row.id);
         if (hCtl == nullptr) { continue; }
         TOOLINFO ti {};
         ti.cbSize   = sizeof(ti);
-        ti.uFlags   = TTF_SUBCLASS;
-        ti.hwnd     = hCtl;
-        ti.uId      = static_cast<UINT_PTR>(row.id);
+        ti.uFlags   = TTF_IDISHWND;
+        ti.hwnd     = hMain;
+        ti.uId      = reinterpret_cast<UINT_PTR>(hCtl);
         ti.lpszText = const_cast<LPWSTR>(row.text);  // control copies the string; never writes through it
         ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&ti));
     }
