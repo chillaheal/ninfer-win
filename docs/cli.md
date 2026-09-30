@@ -318,3 +318,36 @@ from this one-request interface; the persistent Engine and server routes own cro
 optional Host backing.
 
 All weight, sequence, workspace, and graph allocations are released when the Engine is destroyed.
+
+## KV capacity probe
+
+`--probe` loads the artifact and exits without a request: it needs no `--prompt` or
+`--messages`, forces `--kv-capacity auto` for the selected `--kv-dtype`, and prints the
+resolved sizing to stdout, one `name=value` line per fact:
+
+```bash
+./build/apps/ninfer models/qwen3_8_27b_nvfp4.ninfer --probe --kv-dtype fp8
+```
+
+```text
+probe=ok
+kv_fit_tokens=229376
+vram_free_after_weights_bytes=17179869184
+kv_capacity_mode=auto
+effective_max_context=32768
+kv_cache_dtype=fp8-e4m3-row256
+build_id=5b7c3d2e
+```
+
+The normal startup diagnostics still go to stderr. The lines are:
+
+- `probe=ok` marks a completed probe;
+- `kv_fit_tokens` is the automatic KV capacity in tokens the Engine resolved for the
+  complete enabled runtime layout;
+- `vram_free_after_weights_bytes` is the GPU memory left free after the weights and
+  resident layout are loaded;
+- `kv_capacity_mode` is `auto` or `explicit`; `--probe` always resolves `auto`;
+- `effective_max_context` is the Engine's context ceiling;
+- `kv_cache_dtype` is the selected KV storage: `bf16`, `int8-group64`, `fp8-e4m3-row256`,
+  `nvfp4`, or `k8v4`;
+- `build_id` is the binary's build identifier, printed when the build carries one.

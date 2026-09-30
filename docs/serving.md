@@ -71,6 +71,10 @@ and prefill remain outside speculative acceleration. A later request cannot enab
 omitted at startup. The artifact need only contain the Text backbone and the optional components
 selected for this process.
 
+On Windows, `build-windows\apps\Release\ninfer-gui.exe` is an optional Win32 launcher for
+`ninfer-serve.exe`: it configures the launch, probes the free VRAM to pin `--kv-capacity`
+(or auto-fills `--max-context`), and persists its settings to `gui-settings.ini` next to the exe.
+
 ### Stop the server
 
 Press Ctrl+C twice to stop the server. The first press only shows a prompt on the console's bottom

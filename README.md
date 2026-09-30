@@ -79,6 +79,11 @@ Running on another PC needs an RTX 50-series GPU (the build targets `sm_120a`) a
 of 580 or later (CUDA 13); no CUDA toolkit is needed. Copy the DLLs next to `ninfer-serve.exe` and
 install the Visual C++ redistributable if it is missing.
 
+`build-windows\apps\Release\ninfer-gui.exe` is a small Win32 launcher that starts
+`ninfer-serve.exe` from a form instead of a command line: it probes the free VRAM to pin
+`--kv-capacity` (or auto-fills `--max-context`), launches the server with the chosen settings, and
+keeps them in `gui-settings.ini` next to the exe.
+
 ## Quick start (Linux)
 
 The fork builds and runs on 64-bit Linux too, including WSL2 (tested on Ubuntu 24.04 under WSL2
