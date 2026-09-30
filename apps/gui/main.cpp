@@ -110,6 +110,10 @@ constexpr int IDC_CHAT_TEMPLATE_EDIT          = 325;
 constexpr int IDC_CONTEXT_COST_PRESETS_EDIT   = 326;
 constexpr int IDC_TOLERANT_TOOL_CALLS_CHECK   = 327;
 constexpr int IDC_ADV_GROUP                   = 328;  // "Advanced" group box
+// The 24 Advanced labels carry dialog IDs so set_advanced_visible can hide
+// and show them with the group (statics without an ID would stay visible
+// in the compact view). They are handed out sequentially in creation order.
+constexpr int IDC_ADV_LABEL_BASE              = 400;  // 24 labels: 400..423
 
 // Posted by the serve watcher thread when the child process exits;
 // wParam: the exit code.
@@ -1247,17 +1251,22 @@ constexpr int kAdvRowStep      = 30;
 constexpr int kCompactWinH     = 940;   // the height CreateWindowExW sets
 constexpr int kExpandedClientH = kAdvGroupY + kAdvGroupH + 40;  // group + status strip
 
-// Show/hide the Advanced group box and all 27 children, and grow/shrink the
-// window so the group and the auto-anchored status line stay fully visible.
-// WM_SIZE re-anchors the status line on the resize.
+// Show/hide the Advanced group box, all 27 controls, and all 24 labels, and
+// grow/shrink the window so the group and the auto-anchored status line stay
+// fully visible. WM_SIZE re-anchors the status line on the resize. The
+// "Show advanced" checkbox itself always stays visible.
 void set_advanced_visible(HWND hwnd, bool show) {
     const int cmd = show ? SW_SHOWNOACTIVATE : SW_HIDE;
     HWND group = ::GetDlgItem(hwnd, IDC_ADV_GROUP);
     if (group != nullptr) { ::ShowWindow(group, cmd); }
-    for (int id = IDC_PREFIX_CACHE_FILE_EDIT; id <= IDC_TOLERANT_TOOL_CALLS_CHECK; ++id) {
-        HWND c = ::GetDlgItem(hwnd, id);
-        if (c != nullptr) { ::ShowWindow(c, cmd); }
-    }
+    auto toggle = [&](int from, int to) {
+        for (int id = from; id <= to; ++id) {
+            HWND c = ::GetDlgItem(hwnd, id);
+            if (c != nullptr) { ::ShowWindow(c, cmd); }
+        }
+    };
+    toggle(IDC_PREFIX_CACHE_FILE_EDIT, IDC_TOLERANT_TOOL_CALLS_CHECK);  // controls
+    toggle(IDC_ADV_LABEL_BASE, IDC_ADV_LABEL_BASE + 23);                // labels
     RECT wr = {};
     RECT cr = {};
     if (!::GetWindowRect(hwnd, &wr) || !::GetClientRect(hwnd, &cr)) { return; }
@@ -1275,9 +1284,13 @@ void set_advanced_visible(HWND hwnd, bool show) {
 void create_advanced_controls(HWND hwnd) {
     const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
 
+    // Every label created below is an Advanced label: hand out dialog IDs
+    // (IDC_ADV_LABEL_BASE..+23) so the collapse toggle can hide them.
+    int label_id = IDC_ADV_LABEL_BASE;
     auto label = [&](const wchar_t* text, int x, int y) {
         HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                   x, y, 120, 18, hwnd, nullptr,
+                                   x, y, 120, 18, hwnd,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(label_id++)),
                                    ::GetModuleHandleW(nullptr), nullptr);
         ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     };
@@ -1411,6 +1424,13 @@ void create_scaffold(HWND hwnd) {
     create_extended_controls(hwnd);
     create_advanced_controls(hwnd);
     load_settings(hwnd);  // override the defaults above with any saved values
+    // Re-sync the Advanced visibility after load_settings: a persisted
+    // "Show advanced"=1 must actually show the group and grow the window on
+    // startup (create_advanced_controls always starts collapsed).
+    set_advanced_visible(
+        hwnd,
+        ::SendMessageW(::GetDlgItem(hwnd, IDC_ADV_TOGGLE_CHECK), BM_GETCHECK, 0, 0)
+            == BST_CHECKED);
     create_status(hwnd);
     create_usage_block(hwnd);
 }
