@@ -261,7 +261,7 @@ void create_core_controls(HWND hwnd) {
     edit(IDC_MAX_CONTEXT_EDIT, L"", 132, 40, 90);
     label(L"Max new:", 380, 42);
     edit(IDC_MAX_NEW_EDIT, L"", 510, 40, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"240000");
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"200000");
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_NEW_EDIT), L"8196");
 
     // Row 3: KV cache
@@ -270,7 +270,7 @@ void create_core_controls(HWND hwnd) {
     label(L"KV dtype:", 380, 72);
     static const wchar_t* const kKvDtypes[] = {L"bf16", L"int8", L"fp8", L"nvfp4", L"k8v4"};
     combo(IDC_KV_DTYPE_COMBO, 510, 70, 100, kKvDtypes, 5);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT), L"auto");
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT), L"200000");
     ::SendMessageW(::GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 2, 0);  // fp8
 
     // Row 4: VRAM headroom + request log
@@ -323,7 +323,7 @@ void create_core_controls(HWND hwnd) {
     label(L"Draft tokens:", 380, 282);
     edit(IDC_DRAFT_TOKENS_EDIT, L"", 510, 280, 70);
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_DEFAULT_THINK_BUDGET_EDIT), L"2048");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"2");
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"7");
 
     // Row 11: vision + speculative decoding
     label(L"Vision:", 8, 312);
@@ -335,7 +335,7 @@ void create_core_controls(HWND hwnd) {
     ::SendMessageW(::GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 3, 0);  // dflash2
 
     // Row 12: draft head + seed
-    check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 132, 340, 160, false);
+    check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 132, 340, 160, true);
     label(L"Seed:", 380, 342);
     edit(IDC_SEED_EDIT, L"", 510, 340, 100);  // left empty by default (engine seed)
 
