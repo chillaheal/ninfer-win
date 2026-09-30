@@ -4,14 +4,20 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <winhttp.h>
+#include <tchar.h>
+#include <tlhelp32.h>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
+#include <cwchar>
 #include <ctime>
 #include <deque>
 #include <fstream>
 #include <map>
 #include <optional>
+#include <atomic>
+#include <thread>
 #include <nlohmann/json.hpp>
 
 #pragma comment(lib, "winhttp.lib")
@@ -56,6 +62,12 @@ constexpr int IDC_STOP_BUTTON               = 127;
 constexpr int IDC_STATUS                    = 128;  // STATIC status line (SS_NOTIFY)
 constexpr int IDC_USAGE_TEXT                = 129;  // read-only usage block (D11)
 
+// Posted by the serve watcher thread when the child process exits;
+// wParam: the exit code.
+constexpr UINT WM_APP_DONE = WM_APP + 1;
+// WM_TIMER id for the serve /health poll (id 1 is the usage scan).
+constexpr UINT_PTR kHealthTimerId = 2;
+
 // gui-settings.ini lives next to the exe; every Core control key sits in
 // the [Core] section.
 constexpr wchar_t kSettingsSection[] = L"Core";
@@ -79,8 +91,180 @@ std::wstring get_control_text(HWND hwnd) {
     return out;
 }
 
-void set_status(HWND hwnd, const wchar_t* text) {
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STATUS), text);
+void set_status(HWND hwnd, std::wstring_view text) {
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_STATUS), std::wstring(text).c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Wide/UTF-8 conversion + command-line quoting (ported from the reference GUI).
+// ---------------------------------------------------------------------------
+
+std::wstring utf8_to_wide(std::string_view bytes) {
+    if (bytes.empty()) { return {}; }
+    const int needed = ::MultiByteToWideChar(CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()),
+                                             nullptr, 0);
+    std::wstring out(static_cast<std::size_t>(needed), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()), out.data(),
+                          needed);
+    return out;
+}
+
+std::string wide_to_utf8(std::wstring_view text) {
+    if (text.empty()) { return {}; }
+    const int needed =
+        ::WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0,
+                              nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(needed), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), needed,
+                          nullptr, nullptr);
+    return out;
+}
+
+// Locate a sibling executable next to this one.
+std::wstring find_sibling(const wchar_t* exe_name) {
+    const std::wstring dir = module_dir();
+    if (dir.empty()) { return {}; }
+    const std::wstring path = dir + exe_name;
+    return ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES ? path : std::wstring{};
+}
+
+// Declared here (defined below): the serve launch's pre-launch port-busy
+// check calls it before its definition.
+std::string http_get(const std::wstring& host, const std::wstring& port, const std::string& path);
+
+// Quote one argument for a Windows command line: wrap in quotes when it
+// contains whitespace or a quote; escape embedded quotes per CreateProcess rules.
+std::wstring quote_arg(std::wstring_view arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\"") == std::wstring_view::npos) {
+        return std::wstring(arg);
+    }
+    std::wstring out(L"\"");
+    unsigned backslashes = 0;
+    for (wchar_t ch : arg) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
+            continue;
+        }
+        out.append(backslashes, L'\\');
+        backslashes = 0;
+        out.push_back(ch);
+    }
+    out.append(backslashes * 2, L'\\');
+    out.push_back(L'"');
+    return out;
+}
+
+std::wstring build_command_line(const std::vector<std::wstring>& args) {
+    std::wstring command_line;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i != 0) { command_line.push_back(L' '); }
+        command_line += quote_arg(args[i]);
+    }
+    return command_line;
+}
+
+// The selected item text of a CBS_DROPDOWNLIST combo (empty if nothing
+// selected).
+std::wstring combo_text(HWND hwnd, int id) {
+    const HWND c = ::GetDlgItem(hwnd, id);
+    const int sel = static_cast<int>(::SendMessageW(c, CB_GETCURSEL, 0, 0));
+    if (sel < 0) { return {}; }
+    const int len = static_cast<int>(::SendMessageW(c, CB_GETLBTEXTLEN, sel, 0));
+    std::wstring out(static_cast<std::size_t>(len), L'\0');
+    ::SendMessageW(c, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(out.data()));
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Child process state (serve only). `running` is touched by the UI thread and
+// the watcher thread; the atomic keeps them consistent without a mutex.
+// ---------------------------------------------------------------------------
+
+struct ChildProcess {
+    HANDLE process = nullptr;
+    std::atomic<bool> running {false};
+    std::thread watcher;  // joinable while running
+};
+ChildProcess g_child {};
+// host/port of the serve this GUI launched (drives the /health poll and the
+// already-running check).
+std::wstring g_serve_host;
+std::wstring g_serve_port;
+
+// The full ninfer-serve.exe argument vector from the current control values
+// (element 0 is the serve exe path). Flags follow the canonical launch order;
+// blank fields are omitted so the engine default applies.
+std::vector<std::wstring> build_serve_argv(HWND h, const std::wstring& model) {
+    const auto g = [&](int id) -> std::wstring {
+        return get_control_text(GetDlgItem(h, id));
+    };
+    std::vector<std::wstring> a { find_sibling(L"ninfer-serve.exe") };
+    a.push_back(model);                       // positional artifact path (quoted by build_command_line)
+    const std::wstring host = g(IDC_HOST_EDIT);
+    const std::wstring port = g(IDC_PORT_EDIT);
+    if (!host.empty()) { a.push_back(L"--host"); a.push_back(host); }
+    if (!port.empty()) { a.push_back(L"--port"); a.push_back(port); }
+    const std::wstring max_ctx = g(IDC_MAX_CONTEXT_EDIT);
+    if (!max_ctx.empty()) { a.push_back(L"--max-context"); a.push_back(max_ctx); }
+    const std::wstring kv_cap = g(IDC_KV_CAPACITY_EDIT);
+    if (!kv_cap.empty()) { a.push_back(L"--kv-capacity"); a.push_back(kv_cap); } // "auto" or N
+    a.push_back(L"--kv-dtype"); a.push_back(combo_text(h, IDC_KV_DTYPE_COMBO));
+    // --vram-headroom-mib requires --kv-capacity auto (the serve rejects it otherwise);
+    // with a fixed kv-capacity it is omitted.
+    const std::wstring headroom = g(IDC_HEADROOM_EDIT);
+    if (!headroom.empty() && kv_cap == L"auto") {
+        a.push_back(L"--vram-headroom-mib"); a.push_back(headroom);
+    }
+    const std::wstring max_new = g(IDC_MAX_NEW_EDIT);
+    if (!max_new.empty()) { a.push_back(L"--default-max-tokens"); a.push_back(max_new); }
+    // Sampling (always emitted for determinism):
+    const std::wstring temperature = g(IDC_TEMPERATURE_EDIT);
+    const std::wstring topp = g(IDC_TOPP_EDIT);
+    const std::wstring topk  = g(IDC_TOPK_EDIT);
+    const std::wstring minp  = g(IDC_MINP_EDIT);
+    const std::wstring presence = g(IDC_PRESENCE_EDIT);
+    const std::wstring frequency = g(IDC_FREQUENCY_EDIT);
+    const bool greedy = ::SendMessageW(GetDlgItem(h, IDC_GREEDY_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (greedy) { a.push_back(L"--greedy"); }
+    if (!temperature.empty()) { a.push_back(L"--temperature"); a.push_back(temperature); }
+    if (!topp.empty()) { a.push_back(L"--top-p"); a.push_back(topp); }
+    if (!topk.empty())  { a.push_back(L"--top-k"); a.push_back(topk); }
+    if (!minp.empty())  { a.push_back(L"--min-p"); a.push_back(minp); }
+    if (!presence.empty()) { a.push_back(L"--presence-penalty"); a.push_back(presence); }
+    if (!frequency.empty()) { a.push_back(L"--frequency-penalty"); a.push_back(frequency); }
+    const std::wstring seed = g(IDC_SEED_EDIT);
+    if (!seed.empty()) { a.push_back(L"--seed"); a.push_back(seed); }
+    const bool thinking = ::SendMessageW(GetDlgItem(h, IDC_THINKING_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (!thinking) { a.push_back(L"--no-thinking"); }
+    const std::wstring think_budget = g(IDC_DEFAULT_THINK_BUDGET_EDIT);
+    if (!think_budget.empty()) { a.push_back(L"--default-thinking-budget"); a.push_back(think_budget); }
+    const int vision = static_cast<int>(::SendMessageW(GetDlgItem(h, IDC_VISION_COMBO), CB_GETCURSEL, 0, 0));
+    if (vision >= 1) { a.push_back(L"--vision"); }
+    if (vision == 2) { a.push_back(L"--vision-offload"); a.push_back(L"on"); }
+    const int spec = static_cast<int>(::SendMessageW(GetDlgItem(h, IDC_SPEC_COMBO), CB_GETCURSEL, 0, 0));
+    static const wchar_t* kSpec[] = {L"", L"mtp", L"dflash", L"dflash2"};
+    if (spec > 0) {
+        a.push_back(L"--spec"); a.push_back(kSpec[spec]);
+        const std::wstring draft = g(IDC_DRAFT_TOKENS_EDIT);
+        if (!draft.empty()) { a.push_back(L"--draft-tokens"); a.push_back(draft); }
+        if (::SendMessageW(GetDlgItem(h, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+            a.push_back(L"--lm-head-draft");
+        }
+    }
+    if (::SendMessageW(GetDlgItem(h, IDC_PRESERVE_THINKING_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        a.push_back(L"--preserve-thinking");
+    }
+    // Request log is a yes/no checkbox with a fixed name (see Global Constraints).
+    const bool req_log_on =
+        ::SendMessageW(GetDlgItem(h, IDC_REQUEST_LOG_EDIT), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (req_log_on) { a.push_back(L"--request-log-jsonl"); a.push_back(L"requests.jsonl"); }
+    return a;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,20 +452,17 @@ UsageTotals usage_sum_days(const std::vector<std::string>& keys,
     return sum;
 }
 
-// Path of the serve's request log: the "Request log:" control value resolved
-// against the exe dir (the serve is launched with --request-log-jsonl at this
-// same file). A drive-relative or rooted path is used as-is.
+// Path of the serve's request log: the "Request log (requests.jsonl)"
+// checkbox selects on/off for both the --request-log-jsonl flag (see
+// build_serve_argv) and this read path; off means there is no log. The file
+// always sits next to the exe.
 std::wstring request_log_path(HWND hwnd) {
-    const std::wstring dir = module_dir();
-    if (dir.empty()) { return {}; }
-    std::wstring name = L"requests.jsonl";
-    if (HWND e = ::GetDlgItem(hwnd, IDC_REQUEST_LOG_EDIT)) {
-        const std::wstring text = get_control_text(e);
-        if (!text.empty()) { name = text; }
+    if (::SendMessageW(::GetDlgItem(hwnd, IDC_REQUEST_LOG_EDIT), BM_GETCHECK, 0, 0)
+            != BST_CHECKED) {
+        return {};
     }
-    if (name.size() >= 2 && name[1] == L':') { return name; }  // "C:\..."
-    if (!name.empty() && (name[0] == L'\\' || name[0] == L'/')) { return name; }
-    return dir + name;
+    const std::wstring dir = module_dir();
+    return dir.empty() ? std::wstring{} : dir + L"requests.jsonl";
 }
 
 void usage_scan(HWND hwnd) {
@@ -510,13 +691,13 @@ void load_settings(HWND hwnd) {
     load_check(IDC_GREEDY_CHECK, L"greedy", 0);
     load_check(IDC_THINKING_CHECK, L"thinking", 1);
     load_edit(IDC_DEFAULT_THINK_BUDGET_EDIT, L"think_budget");
-    load_combo(IDC_VISION_COMBO, L"vision", 0);
+    load_combo(IDC_VISION_COMBO, L"vision", 2);  // default Offload (governing request)
     load_combo(IDC_SPEC_COMBO, L"spec", 3);
     load_edit(IDC_DRAFT_TOKENS_EDIT, L"draft_tokens");
     load_check(IDC_LM_HEAD_DRAFT_CHECK, L"lm_head_draft", 0);
     load_edit(IDC_SEED_EDIT, L"seed");
     load_check(IDC_PRESERVE_THINKING_CHECK, L"preserve_thinking", 1);
-    load_edit(IDC_REQUEST_LOG_EDIT, L"request_log");
+    load_check(IDC_REQUEST_LOG_EDIT, L"request_log", 1);
 }
 
 void save_settings(HWND hwnd) {
@@ -564,7 +745,7 @@ void save_settings(HWND hwnd) {
     save_check(IDC_LM_HEAD_DRAFT_CHECK, L"lm_head_draft");
     save_edit(IDC_SEED_EDIT, L"seed");
     save_check(IDC_PRESERVE_THINKING_CHECK, L"preserve_thinking");
-    save_edit(IDC_REQUEST_LOG_EDIT, L"request_log");
+    save_check(IDC_REQUEST_LOG_EDIT, L"request_log");
 }
 
 // ---------------------------------------------------------------------------
@@ -656,12 +837,11 @@ void create_core_controls(HWND hwnd) {
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT), L"200000");
     ::SendMessageW(::GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 2, 0);  // fp8
 
-    // Row 4: VRAM headroom + request log
+    // Row 4: VRAM headroom + request log (yes/no; the file name is fixed to
+    // requests.jsonl next to the exe when on)
     label(L"VRAM headroom (MiB):", 8, 102);
     edit(IDC_HEADROOM_EDIT, L"", 132, 100, 80);  // left empty by default
-    label(L"Request log:", 380, 102);
-    edit(IDC_REQUEST_LOG_EDIT, L"", 510, 100, 160);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_REQUEST_LOG_EDIT), L"requests.jsonl");
+    check(IDC_REQUEST_LOG_EDIT, L"Request log (requests.jsonl)", 380, 102, 220, true);
 
     // Row 5: endpoint
     label(L"Host:", 8, 132);
@@ -711,7 +891,8 @@ void create_core_controls(HWND hwnd) {
     // Row 11: vision + speculative decoding
     label(L"Vision:", 8, 312);
     static const wchar_t* const kVision[] = {L"Off", L"On (GPU)", L"Offload"};
-    combo(IDC_VISION_COMBO, 132, 310, 120, kVision, 3);  // Off = index 0
+    combo(IDC_VISION_COMBO, 132, 310, 120, kVision, 3);
+    ::SendMessageW(::GetDlgItem(hwnd, IDC_VISION_COMBO), CB_SETCURSEL, 2, 0);  // default Offload
     label(L"Spec:", 380, 312);
     static const wchar_t* const kSpecs[] = {L"off", L"mtp", L"dflash", L"dflash2"};
     combo(IDC_SPEC_COMBO, 510, 310, 120, kSpecs, 4);
@@ -736,13 +917,212 @@ void create_scaffold(HWND hwnd) {
     create_usage_block(hwnd);
 }
 
+// ---------------------------------------------------------------------------
+// Serve lifecycle: build the argv, launch ninfer-serve.exe in its own
+// console, poll /health until it reports up, and Stop / exit terminate the
+// child so no orphaned GPU work lingers.
+// ---------------------------------------------------------------------------
+
+// Launch the serve: CreateProcessW in its own console (CREATE_NEW_CONSOLE) so
+// the user watches "listening on http://host:port" and the live tok/s stats
+// directly -- unsloth-style. Disable Launch / enable Stop, start the ~1 s
+// /health poll, and reap the child on a watcher thread that posts
+// WM_APP_DONE.
+void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv) {
+    // Reap a previous run's watcher thread: it stays joinable after posting
+    // WM_APP_DONE, and assigning a new joinable thread to g_child.watcher would
+    // std::terminate.
+    if (g_child.watcher.joinable()) { g_child.watcher.join(); }
+
+    STARTUPINFOW si {};
+    si.cb = sizeof(si);
+
+    // CreateProcessW takes an LPWSTR and may modify the buffer; work on a copy.
+    std::wstring mutable_command = build_command_line(argv);
+    // Run the serve from the exe dir so a bare --request-log-jsonl name lands
+    // where the usage tracker reads it (module_dir() + "requests.jsonl").
+    // CreateProcessW may modify lpCurrentDirectory, so work on a copy.
+    std::wstring current_dir = module_dir();
+    PROCESS_INFORMATION pi {};
+    if (!::CreateProcessW(argv[0].c_str(), mutable_command.data(), nullptr, nullptr, TRUE,
+                          CREATE_NEW_CONSOLE,
+                          current_dir.empty() ? nullptr : current_dir.data(),
+                          nullptr, &si, &pi)) {
+        const DWORD err = ::GetLastError();
+        set_status(hwnd, L"Error: failed to start ninfer-serve.exe (Win32 error " +
+                            std::to_wstring(err) + L")");
+        return;
+    }
+    ::CloseHandle(pi.hThread);
+
+    g_child.process   = pi.hProcess;
+    g_child.running.store(true);
+
+    ::EnableWindow(::GetDlgItem(hwnd, IDC_LAUNCH_BUTTON), FALSE);
+    ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), TRUE);
+    set_status(hwnd, L"Serving \u2014 waiting for /health\u2026");
+    ::SetTimer(hwnd, kHealthTimerId, 1000, nullptr);
+
+    g_child.watcher = std::thread([hwnd] {
+        ::WaitForSingleObject(g_child.process, INFINITE);
+        DWORD exit_code = 0;
+        ::GetExitCodeProcess(g_child.process, &exit_code);
+        ::CloseHandle(g_child.process);
+        g_child.process = nullptr;
+        g_child.running.store(false);
+        ::PostMessageW(hwnd, WM_APP_DONE, static_cast<WPARAM>(exit_code), 0);
+    });
+}
+
+// Validate the form, guard against a serve already bound to the target port,
+// then build and launch the serve command line.
+void serve_child(HWND hwnd) {
+    const std::wstring model = get_control_text(::GetDlgItem(hwnd, IDC_MODEL_EDIT));
+    const std::wstring host  = get_control_text(::GetDlgItem(hwnd, IDC_HOST_EDIT));
+    const std::wstring port  = get_control_text(::GetDlgItem(hwnd, IDC_PORT_EDIT));
+
+    if (model.empty()) {
+        set_status(hwnd, L"Error: choose a model artifact (.ninfer)");
+        return;
+    }
+    if (port.empty()) { set_status(hwnd, L"Error: enter a port number"); return; }
+    for (wchar_t ch : port) {
+        if (ch < L'0' || ch > L'9') {
+            set_status(hwnd, L"Error: port must be numeric");
+            return;
+        }
+    }
+
+    if (find_sibling(L"ninfer-serve.exe").empty()) {
+        set_status(hwnd, L"Error: ninfer-serve.exe not found next to ninfer-gui.exe");
+        return;
+    }
+
+    // A serve already answering on the target port would make the new child die
+    // on bind with no useful status; detect it up front via /health (the same
+    // helper the health poll uses).
+    if (!http_get(host, port, "/health").empty()) {
+        set_status(hwnd, L"A serve is already running on " +
+                            (host.empty() ? std::wstring(L"127.0.0.1") : host) + L":" + port +
+                            L"; Stop it first or pick another port.");
+        return;
+    }
+
+    g_serve_host = host.empty() ? std::wstring(L"127.0.0.1") : host;
+    g_serve_port = port;
+
+    const std::vector<std::wstring> argv = build_serve_argv(hwnd, model);
+    launch_serve(hwnd, argv);
+}
+
+// Stop the serve this GUI launched (its terminal window dies); the GUI stays
+// open. The watcher posts WM_APP_DONE, which re-enables Launch and reports
+// the exit code.
+void stop_serve(HWND hwnd) {
+    if (g_child.running.load() && g_child.process != nullptr) {
+        set_status(hwnd, L"Stopping serve\u2026");
+        ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
+        ::TerminateProcess(g_child.process, 1);
+    } else {
+        set_status(hwnd, L"No serve started from this GUI.");
+    }
+}
+
+// Terminate every ninfer engine process (ninfer-serve.exe) in any session so
+// no orphaned GPU work lingers after this GUI closes. Main-window only.
+void kill_all_ninfer_engines() {
+    const wchar_t* names[] = {L"ninfer-serve.exe"};
+    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) { return; }
+
+    PROCESSENTRY32W entry {};
+    entry.dwSize = sizeof(entry);
+    if (::Process32FirstW(snapshot, &entry)) {
+        do {
+            for (const wchar_t* name : names) {
+                if (_wcsicmp(entry.szExeFile, name) != 0) { continue; }
+                HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+                if (process != nullptr) {
+                    ::TerminateProcess(process, 1);
+                    ::CloseHandle(process);
+                }
+            }
+        } while (::Process32NextW(snapshot, &entry));
+    }
+    ::CloseHandle(snapshot);
+}
+
+// WinHttp GET: short timeout, local HTTP only. Any failure collapses to an
+// empty body, so a closed port never hangs the UI.
+std::string http_get(const std::wstring& host, const std::wstring& port, const std::string& path) {
+    const std::wstring host_wide = host.empty() ? std::wstring(L"127.0.0.1") : host;
+    const std::string narrow_port = wide_to_utf8(port);
+    char* end = nullptr;
+    unsigned long port_num = std::strtoul(narrow_port.c_str(), &end, 10);
+    if (end == narrow_port.c_str() || port_num == 0) { port_num = 80; }
+
+    HINTERNET session = ::WinHttpOpen(L"NInfer/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (session == nullptr) { return {}; }
+    std::string body;
+    const DWORD timeout_ms = 2000;  // a closed port must never hang the UI
+    HINTERNET connect = ::WinHttpConnect(session, host_wide.c_str(), port_num, 0);
+    if (connect != nullptr) {
+        ::WinHttpSetTimeouts(connect, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
+        HINTERNET request =
+            ::WinHttpOpenRequest(connect, L"GET", utf8_to_wide(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+                                 WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+        if (request != nullptr) {
+            if (::WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                     WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                ::WinHttpReceiveResponse(request, nullptr)) {
+                DWORD status_code   = 0;
+                DWORD status_length = sizeof(status_code);
+                if (::WinHttpQueryHeaders(
+                        request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status_code, &status_length,
+                        WINHTTP_NO_HEADER_INDEX) &&
+                    status_code == 200) {
+                    char chunk[4096];
+                    DWORD got = 0;
+                    while (::WinHttpReadData(request, chunk, sizeof(chunk), &got) && got > 0) {
+                        body.append(chunk, got);
+                    }
+                }
+            }
+            ::WinHttpCloseHandle(request);
+        }
+        ::WinHttpCloseHandle(connect);
+    }
+    ::WinHttpCloseHandle(session);
+    return body;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_COMMAND:
         if (LOWORD(wParam) == IDCANCEL) { ::PostQuitMessage(0); }
         if (HIWORD(wParam) == EN_KILLFOCUS) { save_settings(hwnd); }
+        if (LOWORD(wParam) == IDC_LAUNCH_BUTTON && HIWORD(wParam) == BN_CLICKED &&
+            !g_child.running.load()) {
+            serve_child(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_STOP_BUTTON && HIWORD(wParam) == BN_CLICKED) {
+            stop_serve(hwnd);
+            return 0;
+        }
         return 0;
     case WM_TIMER:
+        if (wParam == kHealthTimerId) {
+            // One-shot up-check: the serve is reachable (or this tick raced the
+            // exit); either way the poll stops here.
+            ::KillTimer(hwnd, kHealthTimerId);
+            if (!http_get(g_serve_host, g_serve_port, "/health").empty()) {
+                set_status(hwnd, L"Serve up on " + g_serve_host + L":" + g_serve_port);
+            }
+            return 0;
+        }
         usage_scan(hwnd);
         return 0;
     case WM_SIZE: {
@@ -754,9 +1134,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
+    case WM_APP_DONE:
+        ::KillTimer(hwnd, kHealthTimerId);
+        ::EnableWindow(::GetDlgItem(hwnd, IDC_LAUNCH_BUTTON), TRUE);
+        ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
+        set_status(hwnd, wParam == 0 ? L"Serve stopped (exit 0)"
+                                     : L"Serve exited with code " + std::to_wstring(wParam));
+        return 0;
     case WM_CLOSE:
         save_settings(hwnd);
         ::KillTimer(hwnd, 1);
+        ::KillTimer(hwnd, kHealthTimerId);
+        // Terminate the serve this GUI launched so closing the window never
+        // leaves orphaned GPU work behind.
+        if (g_child.running.load()) {
+            if (g_child.process != nullptr) { ::TerminateProcess(g_child.process, 1); }
+            if (g_child.watcher.joinable()) { g_child.watcher.join(); }
+        }
         ::DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
