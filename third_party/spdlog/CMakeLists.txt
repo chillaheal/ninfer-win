@@ -10,6 +10,9 @@ add_library(spdlog::spdlog ALIAS ninfer_third_party_spdlog)
 
 target_compile_features(ninfer_third_party_spdlog PUBLIC cxx_std_11)
 target_compile_definitions(ninfer_third_party_spdlog PUBLIC SPDLOG_COMPILED_LIB)
+if(MSVC)
+  target_compile_options(ninfer_third_party_spdlog PRIVATE /utf-8)
+endif()
 target_include_directories(ninfer_third_party_spdlog SYSTEM PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ninfer_third_party_spdlog PUBLIC Threads::Threads)

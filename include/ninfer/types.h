@@ -269,6 +269,15 @@ struct ContextCostOptions {
     std::filesystem::path preset_path;
 };
 
+// How a client-supplied thinking budget that exceeds the remaining output capacity is handled.
+// Strict preserves upstream behavior (reject the request with 400). Clamp clamps the client
+// budget down to fit the capacity. Ignore drops the client budget so thinking is unlimited.
+enum class ThinkingBudgetPolicy : std::uint8_t {
+    Strict,
+    Clamp,
+    Ignore,
+};
+
 struct EngineOptions {
     std::filesystem::path artifact_path;
     std::filesystem::path chat_template_path;
@@ -276,6 +285,9 @@ struct EngineOptions {
     // </think> close the frontend appends when the message lacks it. Empty preserves the
     // model's built-in end-of-thinking control suffix.
     std::string thinking_budget_message;
+    // How a client-supplied thinking budget that exceeds the remaining output capacity is
+    // handled: Strict rejects (400); Clamp clamps the budget to fit; Ignore drops the budget.
+    ThinkingBudgetPolicy thinking_budget_policy = ThinkingBudgetPolicy::Strict;
     EnginePurpose purpose              = EnginePurpose::Generation;
     int device                         = 0;
     std::uint32_t max_context          = 2048; // Logical ceiling of one request or score window.

@@ -317,8 +317,12 @@ ninfer::RequestOptions to_request_options(const GenerationRequest& request,
     options.execution.requested_output_tokens = static_cast<std::uint32_t>(request.max_tokens);
     options.execution.allow_prefix_reuse      = allow_prefix_reuse;
     if (semantics.enable_thinking != false) {
-        options.execution.thinking.budget =
+        auto budget =
             request.thinking_budget ? request.thinking_budget : server.default_thinking_budget;
+        if (budget && server.max_thinking_budget && *budget > *server.max_thinking_budget) {
+            budget = *server.max_thinking_budget;
+        }
+        options.execution.thinking.budget = budget;
     }
     options.execution.sampling             = resolve_sampling_overrides(request.sampling, server);
     options.output.raw                     = false;

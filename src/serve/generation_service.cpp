@@ -237,6 +237,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.artifact_path            = options_.artifact_path;
     engine_options.chat_template_path       = options_.chat_template_path;
     engine_options.thinking_budget_message  = options_.thinking_budget_message;
+    engine_options.thinking_budget_policy   = options_.thinking_budget_policy;
     engine_options.device                   = options_.device;
     engine_options.max_context              = options_.max_context;
     engine_options.rope_yarn_factor          = options_.rope_yarn_factor;

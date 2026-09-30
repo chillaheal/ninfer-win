@@ -322,6 +322,11 @@ post-close model token, preparation is rejected with HTTP 400 code
 `thinking_budget_capacity_insufficient` rather than partially inserting control. The server does
 not promise that the model will emit nonempty content or a tool call after the marker.
 
+By default (`--thinking-budget-policy strict`) the server rejects such requests with HTTP 400
+`thinking_budget_capacity_insufficient`. `--thinking-budget-policy clamp` clamps the client budget
+down to the largest value that fits the remaining capacity (a WARNING is logged); `ignore` drops
+the client budget so thinking is unlimited. `strict` is the default and preserves the 400 behavior.
+
 For Chat Completions, `reasoning_effort: "none"` requests disabled thinking. The selected template
 interprets the other standard values (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
 Conflicting explicit `enable_thinking` and effort values return `conflicting_template_option`.
@@ -947,6 +952,7 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--default-max-tokens N` | output limit when omitted by a request | `8192` |
 | `--default-thinking-budget N` | positive thinking cap inherited by thinking-enabled requests | unset |
 | `--thinking-budget-message S` | text committed when a thinking budget ends thinking, replacing Qwen's early-close guidance; the close marker is appended when `S` lacks it | Qwen guidance |
+| `--thinking-budget-policy strict\|clamp\|ignore` | how a client thinking budget that exceeds the output capacity is handled: strict rejects (400), clamp clamps it to fit, ignore drops it | `strict` |
 | `--vision` | enable media input and load Vision GPU allocations | off |
 | `--vision-offload on\|off` | keep the vision tower in pinned system RAM and borrow Device memory only while encoding; requires `--vision` | `off` |
 | `--vision-max-merged N` | merged vision tokens per image or video, `64..32768` | `32768` |

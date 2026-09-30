@@ -93,12 +93,18 @@ std::string serve_usage_text(const char* argv0) {
            "  --default-thinking-budget N  cap model-origin thinking for enabled\n"
            "                             requests; control tokens count toward the\n"
            "                             request output limit\n"
+           "  --max-thinking-budget N    hard server-side cap on the effective thinking\n"
+           "                             budget: effective = min(client/default budget, N);\n"
+           "                             unset leaves the client/default budget in force\n"
            "  --thinking-budget-message S  message fed to the model when it hits its thinking\n"
            "                             budget, replacing the built-in end-of-thinking notice\n"
            "                             (wrap the message in double quotes, e.g.\n"
            "                             --thinking-budget-message \"Time to stop thinking. I must "
            "act\n"
            "                             now:\")\n"
+           "  --thinking-budget-policy M  how to handle a client thinking budget that exceeds the\n"
+           "                             output capacity: strict (default, 400), clamp, or\n"
+           "                             ignore\n"
            "  --model-id ID              override the artifact metadata.name reported by\n"
            "                             the server\n"
            "  --chat-template FILE       replace the artifact frontend chat template at\n"
@@ -540,10 +546,29 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--default-thinking-budget is out of range");
             }
             options.default_thinking_budget = static_cast<std::uint32_t>(budget);
+        } else if (arg == "--max-thinking-budget") {
+            const std::uint64_t cap = parse_u64(require_value("--max-thinking-budget"),
+                                                "max-thinking-budget");
+            if (cap == 0 || cap > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("--max-thinking-budget is out of range");
+            }
+            options.max_thinking_budget = static_cast<std::uint32_t>(cap);
         } else if (arg == "--thinking-budget-message") {
             options.thinking_budget_message = require_value("--thinking-budget-message");
             if (options.thinking_budget_message.empty()) {
                 throw std::invalid_argument("--thinking-budget-message must not be empty");
+            }
+        } else if (arg == "--thinking-budget-policy") {
+            const std::string_view value = require_value("--thinking-budget-policy");
+            if (value == "strict") {
+                options.thinking_budget_policy = ThinkingBudgetPolicy::Strict;
+            } else if (value == "clamp") {
+                options.thinking_budget_policy = ThinkingBudgetPolicy::Clamp;
+            } else if (value == "ignore") {
+                options.thinking_budget_policy = ThinkingBudgetPolicy::Ignore;
+            } else {
+                throw std::invalid_argument(
+                    "--thinking-budget-policy accepts strict, clamp, or ignore");
             }
         } else if (arg == "--vision") {
             options.enable_vision = true;
