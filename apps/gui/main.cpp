@@ -77,6 +77,40 @@ constexpr int IDC_NO_CUDA_GRAPH_CHECK       = 211;
 constexpr int IDC_LOG_LEVEL_COMBO           = 212;  // error | warn | info | debug
 constexpr int IDC_USAGE_CHUNK_CHOICE_CHECK  = 213;
 
+// Advanced section (collapsed group box below Extended; the "Show advanced"
+// toggle shows/hides it): prefix-cache, ngram, cache-tap, and request-store
+// tuning flags. Empty edits and unchecked boxes are omitted from the serve
+// argv.
+constexpr int IDC_ADV_TOGGLE_CHECK            = 300;
+constexpr int IDC_PREFIX_CACHE_FILE_EDIT      = 301;
+constexpr int IDC_USE_ORIG_PREFIX_CHECK       = 302;
+constexpr int IDC_MAX_SHARED_PREFIXES_EDIT    = 303;
+constexpr int IDC_MAX_PRIVATE_CONT_EDIT       = 304;
+constexpr int IDC_LONG_ANCHOR_SPACING_EDIT    = 305;
+constexpr int IDC_MAX_LONG_ANCHORS_EDIT       = 306;
+constexpr int IDC_HOST_CACHE_MIB_EDIT         = 307;
+constexpr int IDC_HOST_KV_MIB_EDIT            = 308;
+constexpr int IDC_HOST_STATE_SLOTS_EDIT       = 309;
+constexpr int IDC_DEV_SNAP_SLOTS_EDIT         = 310;
+constexpr int IDC_DEV_STATE_SLOTS_EDIT        = 311;
+constexpr int IDC_NGRAM_DRAFT_EDIT            = 312;
+constexpr int IDC_NGRAM_MIN_MATCH_EDIT        = 313;
+constexpr int IDC_NGRAM_NATIVE_CHECK          = 314;
+constexpr int IDC_NGRAM_ARCHIVE_MIB_EDIT      = 315;
+constexpr int IDC_NGRAM_SESSION_MIB_EDIT      = 316;
+constexpr int IDC_CACHE_TAP_LADDER_EDIT       = 317;
+constexpr int IDC_CACHE_TAP_MIN_GAP_EDIT      = 318;
+constexpr int IDC_CACHE_TAPS_PER_REQ_EDIT     = 319;
+constexpr int IDC_RESP_STORE_MAX_RECORDS_EDIT = 320;
+constexpr int IDC_RESP_STORE_MAX_MIB_EDIT     = 321;
+constexpr int IDC_MAX_REQUEST_MIB_EDIT        = 322;
+constexpr int IDC_MAX_PENDING_REQ_EDIT        = 323;
+constexpr int IDC_PENDING_TIMEOUT_MS_EDIT     = 324;
+constexpr int IDC_CHAT_TEMPLATE_EDIT          = 325;
+constexpr int IDC_CONTEXT_COST_PRESETS_EDIT   = 326;
+constexpr int IDC_TOLERANT_TOOL_CALLS_CHECK   = 327;
+constexpr int IDC_ADV_GROUP                   = 328;  // "Advanced" group box
+
 // Posted by the serve watcher thread when the child process exits;
 // wParam: the exit code.
 constexpr UINT WM_APP_DONE = WM_APP + 1;
@@ -306,6 +340,65 @@ std::vector<std::wstring> build_serve_argv(HWND h, const std::wstring& model) {
     if (!log_level.empty()) { a.push_back(L"--log-level"); a.push_back(log_level); }
     if (::SendMessageW(GetDlgItem(h, IDC_USAGE_CHUNK_CHOICE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
         a.push_back(L"--usage-chunk-choice");
+    }
+    // Advanced controls (the group is hidden by default; Win32 reads work on
+    // hidden windows, so the canonical defaults take effect on Launch).
+    const std::wstring prefix_file = g(IDC_PREFIX_CACHE_FILE_EDIT);
+    if (!prefix_file.empty()) { a.push_back(L"--prefix-cache-file"); a.push_back(prefix_file); }
+    if (::SendMessageW(GetDlgItem(h, IDC_USE_ORIG_PREFIX_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        a.push_back(L"--use-original-prefix-caching");
+    }
+    const std::wstring shared_prefixes = g(IDC_MAX_SHARED_PREFIXES_EDIT);
+    if (!shared_prefixes.empty()) { a.push_back(L"--max-shared-prefixes"); a.push_back(shared_prefixes); }
+    const std::wstring private_cont = g(IDC_MAX_PRIVATE_CONT_EDIT);
+    if (!private_cont.empty()) { a.push_back(L"--max-private-continuations"); a.push_back(private_cont); }
+    const std::wstring anchor_spacing = g(IDC_LONG_ANCHOR_SPACING_EDIT);
+    if (!anchor_spacing.empty()) { a.push_back(L"--long-anchor-spacing"); a.push_back(anchor_spacing); }
+    const std::wstring max_anchors = g(IDC_MAX_LONG_ANCHORS_EDIT);
+    if (!max_anchors.empty()) { a.push_back(L"--max-long-anchors-per-continuation"); a.push_back(max_anchors); }
+    const std::wstring host_cache = g(IDC_HOST_CACHE_MIB_EDIT);
+    if (!host_cache.empty()) { a.push_back(L"--host-cache-mib"); a.push_back(host_cache); }
+    const std::wstring host_kv = g(IDC_HOST_KV_MIB_EDIT);
+    if (!host_kv.empty()) { a.push_back(L"--host-kv-mib"); a.push_back(host_kv); }
+    const std::wstring host_slots = g(IDC_HOST_STATE_SLOTS_EDIT);
+    if (!host_slots.empty()) { a.push_back(L"--host-state-slots"); a.push_back(host_slots); }
+    const std::wstring dev_snap = g(IDC_DEV_SNAP_SLOTS_EDIT);
+    if (!dev_snap.empty()) { a.push_back(L"--device-snapshot-slots"); a.push_back(dev_snap); }
+    const std::wstring dev_state = g(IDC_DEV_STATE_SLOTS_EDIT);
+    if (!dev_state.empty()) { a.push_back(L"--device-state-slots"); a.push_back(dev_state); }
+    const std::wstring ngram_draft = g(IDC_NGRAM_DRAFT_EDIT);
+    if (!ngram_draft.empty()) { a.push_back(L"--ngram-draft-tokens"); a.push_back(ngram_draft); }
+    const std::wstring ngram_match = g(IDC_NGRAM_MIN_MATCH_EDIT);
+    if (!ngram_match.empty()) { a.push_back(L"--ngram-min-match"); a.push_back(ngram_match); }
+    if (::SendMessageW(GetDlgItem(h, IDC_NGRAM_NATIVE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        a.push_back(L"--ngram-native-sessions");
+    }
+    const std::wstring ngram_archive = g(IDC_NGRAM_ARCHIVE_MIB_EDIT);
+    if (!ngram_archive.empty()) { a.push_back(L"--ngram-archive-mib"); a.push_back(ngram_archive); }
+    const std::wstring ngram_session = g(IDC_NGRAM_SESSION_MIB_EDIT);
+    if (!ngram_session.empty()) { a.push_back(L"--ngram-session-mib"); a.push_back(ngram_session); }
+    const std::wstring tap_ladder = g(IDC_CACHE_TAP_LADDER_EDIT);
+    if (!tap_ladder.empty()) { a.push_back(L"--cache-tap-ladder"); a.push_back(tap_ladder); }
+    const std::wstring tap_gap = g(IDC_CACHE_TAP_MIN_GAP_EDIT);
+    if (!tap_gap.empty()) { a.push_back(L"--cache-tap-min-gap"); a.push_back(tap_gap); }
+    const std::wstring taps_req = g(IDC_CACHE_TAPS_PER_REQ_EDIT);
+    if (!taps_req.empty()) { a.push_back(L"--cache-taps-per-request"); a.push_back(taps_req); }
+    const std::wstring store_records = g(IDC_RESP_STORE_MAX_RECORDS_EDIT);
+    if (!store_records.empty()) { a.push_back(L"--response-store-max-records"); a.push_back(store_records); }
+    const std::wstring store_mib = g(IDC_RESP_STORE_MAX_MIB_EDIT);
+    if (!store_mib.empty()) { a.push_back(L"--response-store-max-mib"); a.push_back(store_mib); }
+    const std::wstring max_req_mib = g(IDC_MAX_REQUEST_MIB_EDIT);
+    if (!max_req_mib.empty()) { a.push_back(L"--max-request-mib"); a.push_back(max_req_mib); }
+    const std::wstring max_pending = g(IDC_MAX_PENDING_REQ_EDIT);
+    if (!max_pending.empty()) { a.push_back(L"--max-pending-requests"); a.push_back(max_pending); }
+    const std::wstring pending_to = g(IDC_PENDING_TIMEOUT_MS_EDIT);
+    if (!pending_to.empty()) { a.push_back(L"--pending-timeout-ms"); a.push_back(pending_to); }
+    const std::wstring chat_template = g(IDC_CHAT_TEMPLATE_EDIT);
+    if (!chat_template.empty()) { a.push_back(L"--chat-template"); a.push_back(chat_template); }
+    const std::wstring cost_presets = g(IDC_CONTEXT_COST_PRESETS_EDIT);
+    if (!cost_presets.empty()) { a.push_back(L"--context-cost-presets"); a.push_back(cost_presets); }
+    if (::SendMessageW(GetDlgItem(h, IDC_TOLERANT_TOOL_CALLS_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        a.push_back(L"--tolerant-tool-calls");
     }
     return a;
 }
@@ -756,6 +849,35 @@ void load_settings(HWND hwnd) {
     load_check(IDC_NO_CUDA_GRAPH_CHECK, L"no_cuda_graph", 0);
     load_combo(IDC_LOG_LEVEL_COMBO, L"log_level", 2);  // info
     load_check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"usage_chunk_choice", 0);
+    // Advanced controls.
+    load_check(IDC_ADV_TOGGLE_CHECK, L"adv_toggle", 0);
+    load_edit(IDC_PREFIX_CACHE_FILE_EDIT, L"prefix_cache_file");
+    load_check(IDC_USE_ORIG_PREFIX_CHECK, L"use_orig_prefix", 0);
+    load_edit(IDC_MAX_SHARED_PREFIXES_EDIT, L"max_shared_prefixes");
+    load_edit(IDC_MAX_PRIVATE_CONT_EDIT, L"max_private_contin");
+    load_edit(IDC_LONG_ANCHOR_SPACING_EDIT, L"long_anchor_spacing");
+    load_edit(IDC_MAX_LONG_ANCHORS_EDIT, L"max_long_anchors");
+    load_edit(IDC_HOST_CACHE_MIB_EDIT, L"host_cache_mib");
+    load_edit(IDC_HOST_KV_MIB_EDIT, L"host_kv_mib");
+    load_edit(IDC_HOST_STATE_SLOTS_EDIT, L"host_state_slots");
+    load_edit(IDC_DEV_SNAP_SLOTS_EDIT, L"dev_snap_slots");
+    load_edit(IDC_DEV_STATE_SLOTS_EDIT, L"dev_state_slots");
+    load_edit(IDC_NGRAM_DRAFT_EDIT, L"ngram_draft");
+    load_edit(IDC_NGRAM_MIN_MATCH_EDIT, L"ngram_min_match");
+    load_check(IDC_NGRAM_NATIVE_CHECK, L"ngram_native", 0);
+    load_edit(IDC_NGRAM_ARCHIVE_MIB_EDIT, L"ngram_archive_mib");
+    load_edit(IDC_NGRAM_SESSION_MIB_EDIT, L"ngram_session_mib");
+    load_edit(IDC_CACHE_TAP_LADDER_EDIT, L"cache_tap_ladder");
+    load_edit(IDC_CACHE_TAP_MIN_GAP_EDIT, L"cache_tap_min_gap");
+    load_edit(IDC_CACHE_TAPS_PER_REQ_EDIT, L"cache_taps_per_req");
+    load_edit(IDC_RESP_STORE_MAX_RECORDS_EDIT, L"resp_store_max_records");
+    load_edit(IDC_RESP_STORE_MAX_MIB_EDIT, L"resp_store_max_mib");
+    load_edit(IDC_MAX_REQUEST_MIB_EDIT, L"max_request_mib");
+    load_edit(IDC_MAX_PENDING_REQ_EDIT, L"max_pending_req");
+    load_edit(IDC_PENDING_TIMEOUT_MS_EDIT, L"pending_timeout_ms");
+    load_edit(IDC_CHAT_TEMPLATE_EDIT, L"chat_template");
+    load_edit(IDC_CONTEXT_COST_PRESETS_EDIT, L"context_cost_presets");
+    load_check(IDC_TOLERANT_TOOL_CALLS_CHECK, L"tolerant_tool_calls", 0);
 }
 
 void save_settings(HWND hwnd) {
@@ -819,6 +941,35 @@ void save_settings(HWND hwnd) {
     save_check(IDC_NO_CUDA_GRAPH_CHECK, L"no_cuda_graph");
     save_combo(IDC_LOG_LEVEL_COMBO, L"log_level");
     save_check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"usage_chunk_choice");
+    // Advanced controls.
+    save_check(IDC_ADV_TOGGLE_CHECK, L"adv_toggle");
+    save_edit(IDC_PREFIX_CACHE_FILE_EDIT, L"prefix_cache_file");
+    save_check(IDC_USE_ORIG_PREFIX_CHECK, L"use_orig_prefix");
+    save_edit(IDC_MAX_SHARED_PREFIXES_EDIT, L"max_shared_prefixes");
+    save_edit(IDC_MAX_PRIVATE_CONT_EDIT, L"max_private_contin");
+    save_edit(IDC_LONG_ANCHOR_SPACING_EDIT, L"long_anchor_spacing");
+    save_edit(IDC_MAX_LONG_ANCHORS_EDIT, L"max_long_anchors");
+    save_edit(IDC_HOST_CACHE_MIB_EDIT, L"host_cache_mib");
+    save_edit(IDC_HOST_KV_MIB_EDIT, L"host_kv_mib");
+    save_edit(IDC_HOST_STATE_SLOTS_EDIT, L"host_state_slots");
+    save_edit(IDC_DEV_SNAP_SLOTS_EDIT, L"dev_snap_slots");
+    save_edit(IDC_DEV_STATE_SLOTS_EDIT, L"dev_state_slots");
+    save_edit(IDC_NGRAM_DRAFT_EDIT, L"ngram_draft");
+    save_edit(IDC_NGRAM_MIN_MATCH_EDIT, L"ngram_min_match");
+    save_check(IDC_NGRAM_NATIVE_CHECK, L"ngram_native");
+    save_edit(IDC_NGRAM_ARCHIVE_MIB_EDIT, L"ngram_archive_mib");
+    save_edit(IDC_NGRAM_SESSION_MIB_EDIT, L"ngram_session_mib");
+    save_edit(IDC_CACHE_TAP_LADDER_EDIT, L"cache_tap_ladder");
+    save_edit(IDC_CACHE_TAP_MIN_GAP_EDIT, L"cache_tap_min_gap");
+    save_edit(IDC_CACHE_TAPS_PER_REQ_EDIT, L"cache_taps_per_req");
+    save_edit(IDC_RESP_STORE_MAX_RECORDS_EDIT, L"resp_store_max_records");
+    save_edit(IDC_RESP_STORE_MAX_MIB_EDIT, L"resp_store_max_mib");
+    save_edit(IDC_MAX_REQUEST_MIB_EDIT, L"max_request_mib");
+    save_edit(IDC_MAX_PENDING_REQ_EDIT, L"max_pending_req");
+    save_edit(IDC_PENDING_TIMEOUT_MS_EDIT, L"pending_timeout_ms");
+    save_edit(IDC_CHAT_TEMPLATE_EDIT, L"chat_template");
+    save_edit(IDC_CONTEXT_COST_PRESETS_EDIT, L"context_cost_presets");
+    save_check(IDC_TOLERANT_TOOL_CALLS_CHECK, L"tolerant_tool_calls");
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,9 +1232,184 @@ void create_extended_controls(HWND hwnd) {
     edit(IDC_MEDIA_PREPROC_THREADS_EDIT, L"", 132, 706, 80);  // empty (flag omitted)
 }
 
+// The Win32 SDK headers do not define SS_GROUPBOX (it is an MFC constant);
+// 0x0003 is the documented group-box static style.
+constexpr int kSSGroupBox      = 0x0003;
+
+// Advanced (collapsible) section geometry. The group box sits below the
+// Extended section; its 27 controls fill 14 two-column rows of 30 px.
+constexpr int kAdvGroupX       = 8;
+constexpr int kAdvGroupY       = 768;
+constexpr int kAdvGroupW       = 744;
+constexpr int kAdvGroupH       = 448;   // group bottom at 768 + 448 = 1216
+constexpr int kAdvRow0Y        = 788;   // first row's control y
+constexpr int kAdvRowStep      = 30;
+constexpr int kCompactWinH     = 940;   // the height CreateWindowExW sets
+constexpr int kExpandedClientH = kAdvGroupY + kAdvGroupH + 40;  // group + status strip
+
+// Show/hide the Advanced group box and all 27 children, and grow/shrink the
+// window so the group and the auto-anchored status line stay fully visible.
+// WM_SIZE re-anchors the status line on the resize.
+void set_advanced_visible(HWND hwnd, bool show) {
+    const int cmd = show ? SW_SHOWNOACTIVATE : SW_HIDE;
+    HWND group = ::GetDlgItem(hwnd, IDC_ADV_GROUP);
+    if (group != nullptr) { ::ShowWindow(group, cmd); }
+    for (int id = IDC_PREFIX_CACHE_FILE_EDIT; id <= IDC_TOLERANT_TOOL_CALLS_CHECK; ++id) {
+        HWND c = ::GetDlgItem(hwnd, id);
+        if (c != nullptr) { ::ShowWindow(c, cmd); }
+    }
+    RECT wr = {};
+    RECT cr = {};
+    if (!::GetWindowRect(hwnd, &wr) || !::GetClientRect(hwnd, &cr)) { return; }
+    const int nonclient = (wr.bottom - wr.top) - cr.bottom;
+    const int new_h = show ? (kExpandedClientH + nonclient) : kCompactWinH;
+    ::MoveWindow(hwnd, wr.left, wr.top, wr.right - wr.left, new_h, TRUE);
+}
+
+// Advanced section: one collapsible "Advanced" group box below the Extended
+// block holding 27 tuning controls (same two-column scheme as Core/Extended:
+// labels x=8 / x=380, controls x=132 / x=510, 30 px rows; 14 rows). Hidden
+// by default; the "Show advanced" toggle shows it and grows the window.
+// Canonical defaults are set here; the serve argv is built from these values
+// whether or not the group is visible.
+void create_advanced_controls(HWND hwnd) {
+    const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+
+    auto label = [&](const wchar_t* text, int x, int y) {
+        HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                   x, y, 120, 18, hwnd, nullptr,
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    };
+    auto edit = [&](int id, const wchar_t* text, int x, int y, int w) {
+        HWND e = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text,
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                   x, y, w, 22, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        return e;
+    };
+    auto check = [&](int id, const wchar_t* text, int x, int y, int w, bool checked) {
+        HWND c = ::CreateWindowExW(0, L"BUTTON", text,
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                                   x, y, w, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
+        return c;
+    };
+
+    // Compact toggle just above the group (the Extended block ends at 728).
+    check(IDC_ADV_TOGGLE_CHECK, L"Show advanced", 8, 740, 150, false);
+
+    HWND group = ::CreateWindowExW(0, L"STATIC", L"Advanced",
+        WS_CHILD | WS_VISIBLE | WS_GROUP | kSSGroupBox | WS_TABSTOP,
+        kAdvGroupX, kAdvGroupY, kAdvGroupW, kAdvGroupH, hwnd,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_ADV_GROUP)),
+        ::GetModuleHandleW(nullptr), nullptr);
+    ::SendMessageW(group, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+
+    const int y0 = kAdvRow0Y;
+    const int dy = kAdvRowStep;
+
+    // A-row 1: prefix cache file (full-width: holds a long absolute path).
+    // Default resolves to <deploy-dir>\prefix-cache.bin at runtime: the deploy
+    // folder name carries non-ASCII bytes the source cannot spell, and module
+    // dir() carries its real bytes.
+    label(L"Prefix cache file:", 8, y0 + 2);
+    edit(IDC_PREFIX_CACHE_FILE_EDIT, L"", 132, y0, 558);
+    const std::wstring pcache_dir = module_dir();
+    if (!pcache_dir.empty()) {
+        ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PREFIX_CACHE_FILE_EDIT),
+                         (pcache_dir + L"prefix-cache.bin").c_str());
+    }
+
+    // A-row 2: original prefix caching + shared prefixes
+    check(IDC_USE_ORIG_PREFIX_CHECK, L"Use orig prefix caching", 132, y0 + dy, 220, false);
+    label(L"Shared prefixes:", 380, y0 + dy + 2);
+    edit(IDC_MAX_SHARED_PREFIXES_EDIT, L"", 510, y0 + dy, 80);  // empty (flag omitted)
+
+    // A-row 3: private continuations + anchor spacing
+    label(L"Priv. continuations:", 8, y0 + 2*dy + 2);
+    edit(IDC_MAX_PRIVATE_CONT_EDIT, L"", 132, y0 + 2*dy, 80);  // empty (flag omitted)
+    label(L"Anchor spacing:", 380, y0 + 2*dy + 2);
+    edit(IDC_LONG_ANCHOR_SPACING_EDIT, L"", 510, y0 + 2*dy, 80);  // empty (flag omitted)
+
+    // A-row 4: long anchors + host cache
+    label(L"Max long anchors:", 8, y0 + 3*dy + 2);
+    edit(IDC_MAX_LONG_ANCHORS_EDIT, L"", 132, y0 + 3*dy, 80);  // empty (flag omitted)
+    label(L"Host cache (MiB):", 380, y0 + 3*dy + 2);
+    edit(IDC_HOST_CACHE_MIB_EDIT, L"", 510, y0 + 3*dy, 80);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_HOST_CACHE_MIB_EDIT), L"32000");
+
+    // A-row 5: host KV + host state slots
+    label(L"Host KV (MiB):", 8, y0 + 4*dy + 2);
+    edit(IDC_HOST_KV_MIB_EDIT, L"", 132, y0 + 4*dy, 80);  // empty (flag omitted)
+    label(L"Host state slots:", 380, y0 + 4*dy + 2);
+    edit(IDC_HOST_STATE_SLOTS_EDIT, L"", 510, y0 + 4*dy, 80);  // empty (flag omitted)
+
+    // A-row 6: device slots
+    label(L"Dev snap slots:", 8, y0 + 5*dy + 2);
+    edit(IDC_DEV_SNAP_SLOTS_EDIT, L"", 132, y0 + 5*dy, 80);  // empty (flag omitted)
+    label(L"Dev state slots:", 380, y0 + 5*dy + 2);
+    edit(IDC_DEV_STATE_SLOTS_EDIT, L"", 510, y0 + 5*dy, 80);  // empty (flag omitted)
+
+    // A-row 7: ngram draft + min match
+    label(L"Ngram draft:", 8, y0 + 6*dy + 2);
+    edit(IDC_NGRAM_DRAFT_EDIT, L"", 132, y0 + 6*dy, 80);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT), L"15");
+    label(L"Ngram min match:", 380, y0 + 6*dy + 2);
+    edit(IDC_NGRAM_MIN_MATCH_EDIT, L"", 510, y0 + 6*dy, 80);
+    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT), L"8");
+
+    // A-row 8: ngram native sessions + ngram archive
+    check(IDC_NGRAM_NATIVE_CHECK, L"Ngram native sessions", 132, y0 + 7*dy, 200, false);
+    label(L"Ngram archive MiB:", 380, y0 + 7*dy + 2);
+    edit(IDC_NGRAM_ARCHIVE_MIB_EDIT, L"", 510, y0 + 7*dy, 80);  // empty (flag omitted)
+
+    // A-row 9: ngram session + cache tap ladder
+    label(L"Ngram session MiB:", 8, y0 + 8*dy + 2);
+    edit(IDC_NGRAM_SESSION_MIB_EDIT, L"", 132, y0 + 8*dy, 80);  // empty (flag omitted)
+    label(L"Cache tap ladder:", 380, y0 + 8*dy + 2);
+    edit(IDC_CACHE_TAP_LADDER_EDIT, L"", 510, y0 + 8*dy, 80);  // empty (flag omitted)
+
+    // A-row 10: cache tap gap + taps per request
+    label(L"Cache tap min gap:", 8, y0 + 9*dy + 2);
+    edit(IDC_CACHE_TAP_MIN_GAP_EDIT, L"", 132, y0 + 9*dy, 80);  // empty (flag omitted)
+    label(L"Cache taps/req:", 380, y0 + 9*dy + 2);
+    edit(IDC_CACHE_TAPS_PER_REQ_EDIT, L"", 510, y0 + 9*dy, 80);  // empty (flag omitted)
+
+    // A-row 11: response store limits
+    label(L"Resp store rec max:", 8, y0 + 10*dy + 2);
+    edit(IDC_RESP_STORE_MAX_RECORDS_EDIT, L"", 132, y0 + 10*dy, 80);  // empty (flag omitted)
+    label(L"Resp store MiB max:", 380, y0 + 10*dy + 2);
+    edit(IDC_RESP_STORE_MAX_MIB_EDIT, L"", 510, y0 + 10*dy, 80);  // empty (flag omitted)
+
+    // A-row 12: request limits
+    label(L"Max request (MiB):", 8, y0 + 11*dy + 2);
+    edit(IDC_MAX_REQUEST_MIB_EDIT, L"", 132, y0 + 11*dy, 80);  // empty (flag omitted)
+    label(L"Max pending reqs:", 380, y0 + 11*dy + 2);
+    edit(IDC_MAX_PENDING_REQ_EDIT, L"", 510, y0 + 11*dy, 80);  // empty (flag omitted)
+
+    // A-row 13: pending timeout + chat template
+    label(L"Pending timeout ms:", 8, y0 + 12*dy + 2);
+    edit(IDC_PENDING_TIMEOUT_MS_EDIT, L"", 132, y0 + 12*dy, 80);  // empty (flag omitted)
+    label(L"Chat template:", 380, y0 + 12*dy + 2);
+    edit(IDC_CHAT_TEMPLATE_EDIT, L"", 510, y0 + 12*dy, 100);  // empty (flag omitted)
+
+    // A-row 14: context cost presets + tolerant tool calls
+    label(L"Ctx cost presets:", 8, y0 + 13*dy + 2);
+    edit(IDC_CONTEXT_COST_PRESETS_EDIT, L"", 132, y0 + 13*dy, 80);  // empty (flag omitted)
+    check(IDC_TOLERANT_TOOL_CALLS_CHECK, L"Tolerant tool calls", 510, y0 + 13*dy, 180, false);
+
+    // Collapsed by default (no-op window resize: already the compact height).
+    set_advanced_visible(hwnd, false);
+}
+
 void create_scaffold(HWND hwnd) {
     create_core_controls(hwnd);
     create_extended_controls(hwnd);
+    create_advanced_controls(hwnd);
     load_settings(hwnd);  // override the defaults above with any saved values
     create_status(hwnd);
     create_usage_block(hwnd);
@@ -1258,6 +1584,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (LOWORD(wParam) == IDC_STOP_BUTTON && HIWORD(wParam) == BN_CLICKED) {
             stop_serve(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_ADV_TOGGLE_CHECK && HIWORD(wParam) == BN_CLICKED) {
+            set_advanced_visible(
+                hwnd,
+                ::SendMessageW(::GetDlgItem(hwnd, IDC_ADV_TOGGLE_CHECK), BM_GETCHECK, 0, 0)
+                    == BST_CHECKED);
             return 0;
         }
         return 0;
