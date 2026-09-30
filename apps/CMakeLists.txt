@@ -56,9 +56,8 @@ add_dependencies(ninfer-perplexity ninfer_build_id_stamp)
 target_sources(ninfer-perplexity PRIVATE ${NINFER_BUILD_ID_HEADER})
 ninfer_stage_runtime_dlls(ninfer-perplexity)
 
-# Native Win32 launcher (ninfer-gui.exe). Double-clickable, no console. Links only
-# Win32 + winhttp; it launches ninfer.exe / ninfer-serve.exe as child processes.
+# Native Win32 launcher (ninfer-gui.exe). Double-clickable, no console. Links the Win32 system libs it uses (user32, gdi32, comctl32, comdlg32, winhttp); it launches ninfer.exe / ninfer-serve.exe as child processes.
 add_executable(ninfer-gui gui/main.cpp)
 set_target_properties(ninfer-gui PROPERTIES WIN32_EXECUTABLE ON)
 target_include_directories(ninfer-gui PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
-target_link_libraries(ninfer-gui PRIVATE winhttp user32 gdi32 comctl32)
+target_link_libraries(ninfer-gui PRIVATE winhttp user32 gdi32 comctl32 comdlg32)

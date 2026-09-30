@@ -2,6 +2,7 @@
 #define _UNICODE 1
 #include <windows.h>
 #include <windowsx.h>
+#include <commdlg.h>
 #include <commctrl.h>
 #include <winhttp.h>
 #include <string>
@@ -32,7 +33,7 @@ constexpr wchar_t kWindowTitle[]  = L"Wallawalla Launcher";
 // launch the server, and probe it)
 // ---------------------------------------------------------------------------
 constexpr int IDC_MODEL_EDIT                = 100;
-constexpr int IDC_MODEL_BROWSE              = 101;  // (file-picker button; wired in T8)
+constexpr int IDC_MODEL_BROWSE              = 101;  // (file-picker button; GetOpenFileName)
 constexpr int IDC_HOST_EDIT                 = 102;
 constexpr int IDC_PORT_EDIT                 = 103;
 constexpr int IDC_MAX_CONTEXT_EDIT          = 104;
@@ -151,6 +152,24 @@ std::wstring get_control_text(HWND hwnd) {
     std::wstring out(static_cast<std::size_t>(len), L'\0');
     if (len > 0) { ::GetWindowTextW(hwnd, out.data(), len + 1); }
     return out;
+}
+
+std::wstring browse_for_file(HWND owner, std::wstring title, std::wstring filter,
+                             std::wstring initial_dir = {}) {
+    wchar_t buffer[MAX_PATH] {};
+    OPENFILENAMEW ofn {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = owner;
+    ofn.lpstrFilter = filter.data();
+    ofn.nMaxFile    = std::size(buffer);
+    ofn.lpstrFile   = buffer;
+    ofn.lpstrTitle  = title.data();
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!initial_dir.empty()) {
+        ofn.lpstrInitialDir = initial_dir.c_str();
+        ofn.Flags          |= OFN_EXPLORER;
+    }
+    return ::GetOpenFileNameW(&ofn) ? std::wstring(buffer) : std::wstring{};
 }
 
 void set_status(HWND hwnd, std::wstring_view text) {
@@ -1664,7 +1683,7 @@ struct ToolTipRow {
 
 void create_tooltips(HWND hMain) {
     static const ToolTipRow kRows[] = {
-        { IDC_MODEL_EDIT,                L"the `.ninfer` model to load (filename next to the launcher)." },
+        { IDC_MODEL_EDIT,                L"the .ninfer model to load: a filename next to the launcher, or a full path picked with Browse." },
         { IDC_MODEL_BROWSE,              L"pick the `.ninfer` model file to load." },
         { IDC_HOST_EDIT,                 L"address the server listens on (default `127.0.0.1`, local only)." },
         { IDC_PORT_EDIT,                 L"TCP port the server listens on (default `8888`)." },
@@ -2031,6 +2050,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 hwnd,
                 ::SendMessageW(::GetDlgItem(hwnd, IDC_ADV_TOGGLE_CHECK), BM_GETCHECK, 0, 0)
                     == BST_CHECKED);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_MODEL_BROWSE && HIWORD(wParam) == BN_CLICKED) {
+            // Open the dialog where the current model path lives (a stale default
+            // folder would show an empty list under the *.ninfer filter), else
+            // <module_dir>/../models if it exists, else the module dir.
+            std::wstring initial_dir;
+            const std::wstring model = get_control_text(::GetDlgItem(hwnd, IDC_MODEL_EDIT));
+            const auto slash = model.find_last_of(L"\\/");
+            if (slash != std::wstring::npos) {
+                const std::wstring dir = model.substr(0, slash);
+                if (::GetFileAttributesW(dir.c_str()) & FILE_ATTRIBUTE_DIRECTORY) {
+                    initial_dir = dir;
+                }
+            }
+            if (initial_dir.empty()) {
+                initial_dir = module_dir();
+                const std::wstring models_dir = initial_dir + L"../models";
+                if (::GetFileAttributesW(models_dir.c_str()) & FILE_ATTRIBUTE_DIRECTORY) {
+                    initial_dir = models_dir;
+                }
+            }
+            const std::wstring picked = browse_for_file(
+                hwnd, L"Select model artifact",
+                std::wstring(L"NInfer artifacts (*.ninfer)\0*.ninfer\0All files (*)\0*.*\0"),
+                initial_dir);
+            if (!picked.empty()) {
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MODEL_EDIT), picked.c_str());
+            }
             return 0;
         }
         return 0;
