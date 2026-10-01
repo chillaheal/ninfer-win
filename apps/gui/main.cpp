@@ -513,6 +513,28 @@ std::uint64_t parse_probe_field(const std::string& text, const char* key) {
     return static_cast<std::uint64_t>(value);
 }
 
+// Append one probe run (raw stdout/stderr + argv + exit code, UTF-8) to
+// gui-probe.log next to the exe, so a run's output can be audited later
+// (e.g. after a session or serve restart). Best effort: a log failure never
+// fails the probe.
+void append_probe_log(const std::wstring& command_line, DWORD exit_code,
+                      const std::string& stdout_text, const std::string& stderr_text) {
+    const std::wstring dir = module_dir();
+    if (dir.empty()) { return; }
+    std::ofstream file(dir + L"gui-probe.log", std::ios::app);
+    if (!file) { return; }
+    SYSTEMTIME now {};
+    ::GetLocalTime(&now);
+    wchar_t stamp[48] = {};
+    ::swprintf(stamp, std::size(stamp), L"==== %04d-%02d-%02d %02d:%02d:%02d ====\n",
+               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+    file << wide_to_utf8(stamp);
+    file << "argv: " << wide_to_utf8(command_line) << "\n";
+    file << "exit: " << exit_code << "\n";
+    file << "--- stdout ---\n" << stdout_text << "\n";
+    file << "--- stderr ---\n" << stderr_text << "\n";
+}
+
 // Synchronously launch the sibling CLI in probe mode and return the KV fit
 // ceiling (tokens) for the current free VRAM. The probe always runs in
 // auto-KV mode, so the fit is a VRAM ceiling, not capped by --max-context.
@@ -580,13 +602,18 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
     // on a copy.
     std::wstring current_dir = module_dir();
     PROCESS_INFORMATION pi {};
+    // CreateProcessW param order: 7th is lpEnvironment (LPVOID), 8th is
+    // lpCurrentDirectory (LPCWSTR) -- a non-NULL env block must be a valid
+    // environment block, so pass nullptr and the dir.
     if (!::CreateProcessW(cli.c_str(), mutable_command.data(), nullptr, nullptr, TRUE,
                           CREATE_NO_WINDOW,
+                          nullptr,
                           current_dir.empty() ? nullptr : current_dir.data(),
-                          nullptr, &si, &pi)) {
+                          &si, &pi)) {
         ::CloseHandle(out_read); ::CloseHandle(out_write);
         ::CloseHandle(err_read); ::CloseHandle(err_write);
-        set_status(hwnd, L"Error: failed to start the VRAM probe");
+        set_status(hwnd, L"Error: failed to start the VRAM probe (win32 " +
+                           std::to_wstring(::GetLastError()) + L")");
         return 0;
     }
     ::CloseHandle(pi.hThread);
@@ -602,6 +629,8 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
     ::CloseHandle(out_read);
     ::CloseHandle(err_read);
     ::CloseHandle(pi.hProcess);
+
+    append_probe_log(command_line, exit_code, stdout_text, stderr_text);
 
     if (exit_code != 0) {
         set_status(hwnd, L"Probe failed (exit " + std::to_wstring(exit_code) + L"): " +
@@ -1837,10 +1866,13 @@ void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv,
     // CreateProcessW may modify lpCurrentDirectory, so work on a copy.
     std::wstring current_dir = module_dir();
     PROCESS_INFORMATION pi {};
+    // CreateProcessW param order: 7th is lpEnvironment (LPVOID), 8th is
+    // lpCurrentDirectory (LPCWSTR) -- pass nullptr and the dir.
     if (!::CreateProcessW(argv[0].c_str(), mutable_command.data(), nullptr, nullptr, TRUE,
                           CREATE_NEW_CONSOLE,
+                          nullptr,
                           current_dir.empty() ? nullptr : current_dir.data(),
-                          nullptr, &si, &pi)) {
+                          &si, &pi)) {
         const DWORD err = ::GetLastError();
         set_status(hwnd, L"Error: failed to start ninfer-serve.exe (Win32 error " +
                             std::to_wstring(err) + L")");
