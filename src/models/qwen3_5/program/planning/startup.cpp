@@ -1097,7 +1097,10 @@ make_sequence_planner_impl(const execution::Parameters& parameters, DeviceContex
           .minimum_device_reservation_bytes     = planner->minimum->device_reservation_bytes,
           .bytes_per_additional_main_page_group = 0,
     };
-    if (minimum_pages < maximum_pages) {
+    // Populate the per-page-group KV stride unconditionally. It is well-defined even when the
+    // curve spans a single page group (concurrency 1), and the capacity ceiling is derived from
+    // it regardless of the requested context -- so a min == max curve must still report it.
+    {
         auto adjacent = build_sequence_candidate(inputs, minimum_pages + 1U);
         if (adjacent->device_reservation_bytes <= planner->minimum->device_reservation_bytes) {
             throw std::logic_error("Qwen3.5 sequence layout has a nonpositive KV capacity stride");

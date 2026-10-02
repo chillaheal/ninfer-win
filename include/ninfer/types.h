@@ -1049,6 +1049,7 @@ struct MemorySummary {
     std::uint32_t kv_capacity                 = 0; // Resolved page-aligned Main KV capacity.
     std::uint32_t kv_capacity_page_groups     = 0;
     std::uint32_t kv_capacity_max_page_groups = 0;
+    std::uint32_t kv_max_tokens               = 0; // Largest Main KV capacity that fits free VRAM.
     KvCacheStorage kv_cache                   = KvCacheStorage::BFloat16;
     ArenaMemorySummary weights;
     ArenaMemorySummary sequence;

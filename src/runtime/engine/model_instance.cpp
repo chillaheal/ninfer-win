@@ -6,6 +6,7 @@
 #include "models/qwen3_5/measurement.h"
 
 #include <algorithm>
+#include <limits>
 #include <system_error>
 #include <string>
 #include <filesystem>
@@ -313,8 +314,15 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                 context_cost_hardware_class(device.props.name, device.props.major, device.props.minor),
             .prefill_signature = signature},
         options.context_cost.preset_path);
-    auto planner    = models::qwen3_5::make_sequence_planner(instance->parameters, device, options);
-    auto resolution = resolve_kv_capacity(options.kv_capacity, planner.capacity_curve(),
+    auto planner = models::qwen3_5::make_sequence_planner(instance->parameters, device, options);
+    // The capacity curve lives inside the planner, which is moved into the Program plan below.
+    // Capture the affine parameters now so the post-startup ceiling correction (which needs them
+    // after the move) can re-derive the largest KV capacity that fits the free VRAM.
+    const auto& kv_curve                   = planner.capacity_curve();
+    const std::uint32_t kv_main_page_tokens = kv_curve.main_page_tokens;
+    const std::uint32_t kv_minimum_page_groups = kv_curve.minimum_main_page_groups;
+    const std::size_t kv_page_stride          = kv_curve.bytes_per_additional_main_page_group;
+    auto resolution = resolve_kv_capacity(options.kv_capacity, kv_curve,
                                           current_free_device_bytes());
     auto sequence   = std::move(planner).finalize(resolution.main_page_groups);
     if (sequence.device_reservation_bytes() != resolution.runtime_reservation_bytes ||
@@ -365,6 +373,40 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     device.synchronize();
     program.complete();
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();
+    // The VRAM ceiling from resolve_kv_capacity assumed the KV pool could consume the entire
+    // after-weights pool. In practice the Program (CUDA-graph workspace, speculative-decode frame,
+    // vision workspace) is allocated from that same pool, so the true ceiling must net out the
+    // overhead actually measured just now (after-weights minus the fit KV pool minus after-startup
+    // free) plus a small safety margin. Re-derive the largest KV capacity the remainder supports
+    // using the same affine page curve.
+    if (kv_page_stride > 0) {
+        auto& capacity = instance->kv_capacity_resolution;
+        const std::size_t after_weights = capacity.available_after_weights_bytes;
+        const std::size_t after_startup = capacity.available_after_startup_bytes;
+        const std::size_t fit_pool      = capacity.runtime_reservation_bytes;
+        const std::size_t overhead      = (after_weights >= fit_pool + after_startup)
+                                              ? (after_weights - fit_pool - after_startup)
+                                              : 0;
+        // Small built-in safety margin: ~2% of the after-weights pool, guarding against
+        // fragmentation and any residual non-KV allocation the fit-size measurement misses.
+        const std::size_t margin = after_weights / 50;
+        std::size_t budget       = after_weights;
+        if (budget > capacity.automatic_headroom_bytes) {
+            budget -= capacity.automatic_headroom_bytes;
+        }
+        const std::size_t reserved = overhead + margin;
+        budget                     = (budget > reserved) ? (budget - reserved) : 0;
+        if (budget > capacity.minimum_runtime_reservation_bytes) {
+            const std::size_t additional =
+                (budget - capacity.minimum_runtime_reservation_bytes) / kv_page_stride;
+            const std::uint64_t ceiling_pages =
+                static_cast<std::uint64_t>(kv_minimum_page_groups) + additional;
+            const std::uint64_t ceiling_tokens = ceiling_pages * kv_main_page_tokens;
+            if (ceiling_tokens <= std::numeric_limits<std::uint32_t>::max()) {
+                capacity.kv_max_tokens = static_cast<std::uint32_t>(ceiling_tokens);
+            }
+        }
+    }
     const auto& stats = instance->model->storage_stats();
     LoadSummary summary;
     summary.architecture = models::architecture_name(instance->model->config().text.architecture);

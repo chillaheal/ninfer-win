@@ -312,6 +312,7 @@ int main(int argc, char** argv) {
         engine_options.chat_template_path = cli.chat_template_path;
         engine_options.device                   = cli.device;
         engine_options.max_context              = cli.max_context;
+        engine_options.max_concurrency          = cli.max_concurrency;
         engine_options.rope_yarn_factor         = cli.rope_yarn_factor;
         engine_options.kv_capacity              = cli.kv_capacity;
         engine_options.prefill_chunk            = cli.prefill_chunk;
@@ -337,10 +338,24 @@ int main(int argc, char** argv) {
 
         if (cli.probe) {
             const ninfer::MemorySummary memory = engine.memory_summary();
+            // kv_fit_tokens is the resolved capacity, capped at --max-context, so it cannot
+            // report a ceiling above the requested context. kv_max_tokens is the engine's
+            // VRAM-derived ceiling -- the largest context that fits the free VRAM -- net of the
+            // measured non-KV Program overhead (CUDA-graph workspace, speculative frame, vision)
+            // plus a small safety margin, and independent of --max-context. vram_program_overhead_bytes
+            // is that measured overhead: the aggregate VRAM cost of every non-KV setting in force.
+            const std::size_t program_overhead =
+                (memory.available_after_weights_bytes >=
+                 memory.runtime_reservation_bytes + memory.available_after_startup_bytes)
+                    ? (memory.available_after_weights_bytes - memory.runtime_reservation_bytes -
+                       memory.available_after_startup_bytes)
+                    : 0;
             std::cout << "probe=ok\n"
                       << "kv_fit_tokens=" << memory.kv_capacity << '\n'
+                      << "kv_ceiling_tokens=" << memory.kv_max_tokens << '\n'
                       << "vram_free_after_weights_bytes="
                       << memory.available_after_weights_bytes << '\n'
+                      << "vram_program_overhead_bytes=" << program_overhead << '\n'
                       << "kv_capacity_mode=" << format_kv_capacity_mode(memory.kv_capacity_mode) << '\n'
                       << "effective_max_context=" << memory.max_context << '\n'
                       << "kv_cache_dtype=" << format_kv_cache(memory.kv_cache) << '\n';

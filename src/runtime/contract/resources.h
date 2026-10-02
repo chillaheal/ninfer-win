@@ -398,6 +398,9 @@ struct KvCapacityResolution {
     std::size_t available_after_startup_bytes        = 0;
     std::size_t automatic_headroom_bytes             = 0;
     std::size_t planned_slack_bytes                  = 0;
+    // Largest Main KV token capacity whose reservation fits the effective after-weights
+    // budget, independent of the requested context. 0 when the stride is unavailable.
+    std::uint32_t kv_max_tokens                      = 0;
 };
 
 } // namespace ninfer::runtime

@@ -5,6 +5,7 @@
 #include <commdlg.h>
 #include <commctrl.h>
 #include <winhttp.h>
+#include <tlhelp32.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -375,46 +376,77 @@ std::vector<std::wstring> build_serve_argv(HWND h, const std::wstring& model) {
     }
     // Advanced controls (the group is hidden by default; Win32 reads work on
     // hidden windows, so the canonical defaults take effect on Launch).
+    // The hybrid (new, default) and original prefix-caching systems are mutually
+    // exclusive: the serve rejects any argv that mixes their options, so the
+    // checkbox selects one and each side emits only its own flags. Hybrid-only:
+    // --prefix-cache-file, --device-snapshot-slots, --cache-tap-*. Original-only:
+    // --max-shared-prefixes, --max-private-continuations, --long-anchor-spacing,
+    // --max-long-anchors-per-continuation, --host-kv-mib, --host-state-slots,
+    // --device-state-slots. --host-cache-mib is valid under both systems.
+    const bool use_orig_prefix =
+        ::SendMessageW(GetDlgItem(h, IDC_USE_ORIG_PREFIX_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
     const std::wstring prefix_file = g(IDC_PREFIX_CACHE_FILE_EDIT);
-    if (!prefix_file.empty()) { a.push_back(L"--prefix-cache-file"); a.push_back(prefix_file); }
-    if (::SendMessageW(GetDlgItem(h, IDC_USE_ORIG_PREFIX_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
-        a.push_back(L"--use-original-prefix-caching");
+    if (!prefix_file.empty() && !use_orig_prefix) {
+        a.push_back(L"--prefix-cache-file"); a.push_back(prefix_file);
     }
+    if (use_orig_prefix) { a.push_back(L"--use-original-prefix-caching"); }
     const std::wstring shared_prefixes = g(IDC_MAX_SHARED_PREFIXES_EDIT);
-    if (!shared_prefixes.empty()) { a.push_back(L"--max-shared-prefixes"); a.push_back(shared_prefixes); }
+    if (!shared_prefixes.empty() && use_orig_prefix) {
+        a.push_back(L"--max-shared-prefixes"); a.push_back(shared_prefixes);
+    }
     const std::wstring private_cont = g(IDC_MAX_PRIVATE_CONT_EDIT);
-    if (!private_cont.empty()) { a.push_back(L"--max-private-continuations"); a.push_back(private_cont); }
+    if (!private_cont.empty() && use_orig_prefix) {
+        a.push_back(L"--max-private-continuations"); a.push_back(private_cont);
+    }
     const std::wstring anchor_spacing = g(IDC_LONG_ANCHOR_SPACING_EDIT);
-    if (!anchor_spacing.empty()) { a.push_back(L"--long-anchor-spacing"); a.push_back(anchor_spacing); }
+    if (!anchor_spacing.empty() && use_orig_prefix) {
+        a.push_back(L"--long-anchor-spacing"); a.push_back(anchor_spacing);
+    }
     const std::wstring max_anchors = g(IDC_MAX_LONG_ANCHORS_EDIT);
-    if (!max_anchors.empty()) { a.push_back(L"--max-long-anchors-per-continuation"); a.push_back(max_anchors); }
+    if (!max_anchors.empty() && use_orig_prefix) {
+        a.push_back(L"--max-long-anchors-per-continuation"); a.push_back(max_anchors);
+    }
     const std::wstring host_cache = g(IDC_HOST_CACHE_MIB_EDIT);
     if (!host_cache.empty()) { a.push_back(L"--host-cache-mib"); a.push_back(host_cache); }
     const std::wstring host_kv = g(IDC_HOST_KV_MIB_EDIT);
-    if (!host_kv.empty()) { a.push_back(L"--host-kv-mib"); a.push_back(host_kv); }
+    if (!host_kv.empty() && use_orig_prefix) { a.push_back(L"--host-kv-mib"); a.push_back(host_kv); }
     const std::wstring host_slots = g(IDC_HOST_STATE_SLOTS_EDIT);
-    if (!host_slots.empty()) { a.push_back(L"--host-state-slots"); a.push_back(host_slots); }
+    if (!host_slots.empty() && use_orig_prefix) {
+        a.push_back(L"--host-state-slots"); a.push_back(host_slots);
+    }
     const std::wstring dev_snap = g(IDC_DEV_SNAP_SLOTS_EDIT);
-    if (!dev_snap.empty()) { a.push_back(L"--device-snapshot-slots"); a.push_back(dev_snap); }
+    if (!dev_snap.empty() && !use_orig_prefix) {
+        a.push_back(L"--device-snapshot-slots"); a.push_back(dev_snap);
+    }
     const std::wstring dev_state = g(IDC_DEV_STATE_SLOTS_EDIT);
-    if (!dev_state.empty()) { a.push_back(L"--device-state-slots"); a.push_back(dev_state); }
+    if (!dev_state.empty() && use_orig_prefix) {
+        a.push_back(L"--device-state-slots"); a.push_back(dev_state);
+    }
     const std::wstring ngram_draft = g(IDC_NGRAM_DRAFT_EDIT);
     if (!ngram_draft.empty()) { a.push_back(L"--ngram-draft-tokens"); a.push_back(ngram_draft); }
     const std::wstring ngram_match = g(IDC_NGRAM_MIN_MATCH_EDIT);
     if (!ngram_match.empty()) { a.push_back(L"--ngram-min-match"); a.push_back(ngram_match); }
-    if (::SendMessageW(GetDlgItem(h, IDC_NGRAM_NATIVE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
-        a.push_back(L"--ngram-native-sessions");
-    }
     const std::wstring ngram_archive = g(IDC_NGRAM_ARCHIVE_MIB_EDIT);
     if (!ngram_archive.empty()) { a.push_back(L"--ngram-archive-mib"); a.push_back(ngram_archive); }
+    // --ngram-native-sessions requires --ngram-archive-mib; only emit it when the
+    // archive is actually set, otherwise the serve rejects the argv.
+    const bool ngram_native_on =
+        ::SendMessageW(GetDlgItem(h, IDC_NGRAM_NATIVE_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (ngram_native_on && !ngram_archive.empty()) {
+        a.push_back(L"--ngram-native-sessions");
+    }
     const std::wstring ngram_session = g(IDC_NGRAM_SESSION_MIB_EDIT);
     if (!ngram_session.empty()) { a.push_back(L"--ngram-session-mib"); a.push_back(ngram_session); }
     const std::wstring tap_ladder = g(IDC_CACHE_TAP_LADDER_EDIT);
-    if (!tap_ladder.empty()) { a.push_back(L"--cache-tap-ladder"); a.push_back(tap_ladder); }
+    if (!tap_ladder.empty() && !use_orig_prefix) {
+        a.push_back(L"--cache-tap-ladder"); a.push_back(tap_ladder);
+    }
     const std::wstring tap_gap = g(IDC_CACHE_TAP_MIN_GAP_EDIT);
-    if (!tap_gap.empty()) { a.push_back(L"--cache-tap-min-gap"); a.push_back(tap_gap); }
+    if (!tap_gap.empty() && !use_orig_prefix) { a.push_back(L"--cache-tap-min-gap"); a.push_back(tap_gap); }
     const std::wstring taps_req = g(IDC_CACHE_TAPS_PER_REQ_EDIT);
-    if (!taps_req.empty()) { a.push_back(L"--cache-taps-per-request"); a.push_back(taps_req); }
+    if (!taps_req.empty() && !use_orig_prefix) {
+        a.push_back(L"--cache-taps-per-request"); a.push_back(taps_req);
+    }
     const std::wstring store_records = g(IDC_RESP_STORE_MAX_RECORDS_EDIT);
     if (!store_records.empty()) { a.push_back(L"--response-store-max-records"); a.push_back(store_records); }
     const std::wstring store_mib = g(IDC_RESP_STORE_MAX_MIB_EDIT);
@@ -535,11 +567,30 @@ void append_probe_log(const std::wstring& command_line, DWORD exit_code,
     file << "--- stderr ---\n" << stderr_text << "\n";
 }
 
-// Synchronously launch the sibling CLI in probe mode and return the KV fit
-// ceiling (tokens) for the current free VRAM. The probe always runs in
-// auto-KV mode, so the fit is a VRAM ceiling, not capped by --max-context.
-// The forwarded sizing flags mirror build_serve_argv so the ceiling matches
-// the launch; --max-context and --kv-capacity are deliberately NOT forwarded.
+// Append one timestamped line to gui-serve.log next to the exe, so a Launch's
+// outcome (blocked by the port guard, process created, or a Win32 error) is
+// auditable after the fact. Best effort: a log failure never fails the launch.
+void append_serve_log(const std::wstring& line) {
+    const std::wstring dir = module_dir();
+    if (dir.empty()) { return; }
+    std::ofstream file(dir + L"gui-serve.log", std::ios::app);
+    if (!file) { return; }
+    SYSTEMTIME now {};
+    ::GetLocalTime(&now);
+    wchar_t stamp[48] = {};
+    ::swprintf(stamp, std::size(stamp), L"%04d-%02d-%02d %02d:%02d:%02d ",
+               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+    file << wide_to_utf8(stamp) << wide_to_utf8(line) << "\n";
+}
+
+// Synchronously launch the sibling CLI in probe mode and return the largest
+// context that fits the current free VRAM. The engine's auto-KV fit is capped
+// at --max-context, so it cannot report a ceiling above the requested context;
+// the CLI therefore derives kv_ceiling_tokens from the free VRAM alone, and the
+// probe runs at the CLI default --max-context (NOT forwarded here). The value
+// returned is that ceiling, which the Auto button applies as max_context.
+// --kv-capacity is NOT forwarded: the probe forces auto-KV itself. The other
+// sizing flags mirror build_serve_argv.
 // Returns 0 on failure -- the status line carries the reason.
 std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring& key) {
     const std::wstring cli = find_sibling(L"ninfer.exe");
@@ -555,6 +606,10 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
     const bool lm_head_draft =
         ::SendMessageW(GetDlgItem(hwnd, IDC_LM_HEAD_DRAFT_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED;
     std::vector<std::wstring> args { cli, model, L"--probe" };
+    // --max-context is deliberately NOT forwarded: the auto-KV fit is capped at
+    // it, so the CLI derives kv_ceiling_tokens from free VRAM alone (see the
+    // probe block in apps/cli/main.cpp). The other sizing flags mirror
+    // build_serve_argv.
     if (vision >= 1) { args.push_back(L"--vision"); }
     if (vision == 2) { args.push_back(L"--vision-offload"); args.push_back(L"on"); }
     static const wchar_t* kKvDtypes[] = {L"bf16", L"int8", L"fp8", L"nvfp4", L"k8v4"};
@@ -567,6 +622,10 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
     }
     const std::wstring prefill = get_control_text(GetDlgItem(hwnd, IDC_PREFILL_CHUNK_EDIT));
     if (!prefill.empty()) { args.push_back(L"--prefill-chunk"); args.push_back(prefill); }
+    // Match the serve's concurrency: the KV reservation (and thus the VRAM ceiling) scales
+    // with it, so a probe at a different concurrency would misreport the fit.
+    const std::wstring max_conc = get_control_text(GetDlgItem(hwnd, IDC_MAX_CONCURRENCY_EDIT));
+    if (!max_conc.empty()) { args.push_back(L"--max-concurrency"); args.push_back(max_conc); }
     const std::wstring ngram_draft = get_control_text(GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT));
     if (!ngram_draft.empty()) { args.push_back(L"--ngram-draft-tokens"); args.push_back(ngram_draft); }
     const std::wstring ngram_match = get_control_text(GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT));
@@ -577,6 +636,12 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
         if (headroom_mib && *headroom_mib > 0) {
             args.push_back(L"--vram-headroom-mib"); args.push_back(headroom);
         }
+    }
+    // Match the serve's graph workspace so the probe's VRAM profile (and OOM
+    // behaviour) equals the launch -- without this the probe would reserve CUDA
+    // graphs that a --no-cuda-graph serve never allocates.
+    if (::SendMessageW(GetDlgItem(hwnd, IDC_NO_CUDA_GRAPH_CHECK), BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        args.push_back(L"--no-cuda-graph");
     }
     const std::wstring command_line = build_command_line(args);
 
@@ -638,7 +703,11 @@ std::uint32_t run_probe(HWND hwnd, const std::wstring& model, const std::wstring
         return 0;
     }
 
-    const std::uint64_t fit      = parse_probe_field(stdout_text, "kv_fit_tokens=");
+    // The ceiling is the VRAM-derived, --max-context-independent value the Auto
+    // button applies. Fall back to the resolved fit for an older CLI that does not
+    // emit kv_ceiling_tokens.
+    std::uint64_t fit = parse_probe_field(stdout_text, "kv_ceiling_tokens=");
+    if (fit == 0) { fit = parse_probe_field(stdout_text, "kv_fit_tokens="); }
     const std::uint64_t free_after = parse_probe_field(stdout_text, "vram_free_after_weights_bytes=");
     if (fit == 0) {
         set_status(hwnd, L"Probe returned no KV fit: " + utf8_to_wide(stderr_text));
@@ -671,6 +740,7 @@ std::wstring build_probe_key(HWND hwnd, const std::wstring& model) {
     key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT)));
     key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT)));
     key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_HEADROOM_EDIT)));
+    key.push_back(L'\x01'); key.append(get_control_text(GetDlgItem(hwnd, IDC_MAX_CONCURRENCY_EDIT)));
     return key;
 }
 
@@ -716,7 +786,9 @@ struct UsageState {
     bool          shown_rate_valid      = false;
 };
 UsageState g_usage {};
-HFONT g_usage_font = nullptr;  // larger face for the usage block
+HFONT g_usage_font  = nullptr;  // larger face for the usage block
+HFONT g_data_font   = nullptr;  // monospace (Consolas) for numeric/value edits
+HFONT g_title_font  = nullptr;  // bold face for category group-box captions
 constexpr std::int64_t kUsageRateWindowSec   = 600;  // "senaste 10 min"
 constexpr std::int64_t kUsageActivityHoldSec = 10;   // hold rate when idle
 
@@ -1050,7 +1122,7 @@ void create_usage_block(HWND hwnd) {
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     HWND usage = ::CreateWindowExW(0, L"STATIC", L"Usage: scanning\u2026",
         WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX | WS_BORDER,
-        8, 414, 744, 44, hwnd,
+        348, 554, 632, 30, hwnd,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_USAGE_TEXT)),
         ::GetModuleHandleW(nullptr), nullptr);
     ::SendMessageW(usage, WM_SETFONT, reinterpret_cast<WPARAM>(g_usage_font), TRUE);
@@ -1178,8 +1250,12 @@ void save_settings(HWND hwnd) {
         ::WritePrivateProfileStringW(kSettingsSection, key, buffer, path.c_str());
     };
     auto save_check = [&](int id, const wchar_t* key) {
-        ::WritePrivateProfileStringW(kSettingsSection, key,
-                                     ::CheckDlgButton(hwnd, id, BST_CHECKED) ? L"1" : L"0",
+        // BM_GETCHECK only: CheckDlgButton sets the box to checked as a side
+        // effect, so a second save would persist the flipped state and an
+        // uncheck would silently "come back".
+        const bool checked =
+            ::SendMessageW(::GetDlgItem(hwnd, id), BM_GETCHECK, 0, 0) == BST_CHECKED;
+        ::WritePrivateProfileStringW(kSettingsSection, key, checked ? L"1" : L"0",
                                      path.c_str());
     };
 
@@ -1254,9 +1330,24 @@ void save_settings(HWND hwnd) {
 }
 
 // ---------------------------------------------------------------------------
-// Controls (two-column form: label column at x=8 / x=380, controls at
-// x=132 / x=510; rows every 30 px from y=10)
+// Controls (grouped by category: two side-by-side columns of labelled
+// GroupBoxes; each box holds up to two label/control pairs per row). Numeric
+// value edits use a monospace face (g_data_font); category captions use a
+// bold face (g_title_font). Rows every kRowStep px.
 // ---------------------------------------------------------------------------
+
+void create_ui_fonts() {
+    if (g_data_font == nullptr) {
+        g_data_font = ::CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+    }
+    if (g_title_font == nullptr) {
+        g_title_font = ::CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    }
+}
 
 void create_status(HWND hwnd) {
     const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
@@ -1270,40 +1361,40 @@ void create_status(HWND hwnd) {
     ::SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 }
 
-void create_core_controls(HWND hwnd) {
-    const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+void create_grouped_controls(HWND hwnd) {
+    const HFONT font   = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+    const HFONT data   = g_data_font;
+    const HINSTANCE hi = ::GetModuleHandleW(nullptr);
+    constexpr int kSS  = 0x0003;  // SS_GROUPBOX (undocumented in the SDK headers)
 
-    auto label = [&](const wchar_t* text, int x, int y) {
+    auto label = [&](const wchar_t* text, int x, int y, int w = 104) {
         HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                   x, y, 120, 18, hwnd, nullptr,
-                                   ::GetModuleHandleW(nullptr), nullptr);
+                                   x, y, w, 18, hwnd, nullptr, hi, nullptr);
         ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     };
-    auto edit = [&](int id, const wchar_t* text, int x, int y, int w) {
-        HWND e = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text,
+    auto edit = [&](int id, int x, int y, int w) {
+        HWND e = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                                    x, y, w, 22, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+                                   hi, nullptr);
+        ::SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(data), TRUE);
         return e;
     };
-    auto combo = [&](int id, int x, int y, int w, const wchar_t* const* items, int count) {
+    auto combo = [&](int id, int x, int y, int w, const wchar_t* const* items, int count, int sel) {
         HWND c = ::CreateWindowExW(0, L"COMBOBOX", L"",
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
                                    x, y, w, 200, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        for (int i = 0; i < count; ++i) {
-            ::SendMessageW(c, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(items[i]));
-        }
-        ::SendMessageW(c, CB_SETCURSEL, 0, 0);
+                                   hi, nullptr);
+        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(data), TRUE);
+        for (int i = 0; i < count; ++i) { ::SendMessageW(c, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(items[i])); }
+        ::SendMessageW(c, CB_SETCURSEL, sel, 0);
         return c;
     };
     auto check = [&](int id, const wchar_t* text, int x, int y, int w, bool checked) {
         HWND c = ::CreateWindowExW(0, L"BUTTON", text,
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
                                    x, y, w, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
+                                   hi, nullptr);
         ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
         return c;
@@ -1312,214 +1403,169 @@ void create_core_controls(HWND hwnd) {
         HWND b = ::CreateWindowExW(0, L"BUTTON", text,
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                                    x, y, w, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
+                                   hi, nullptr);
         ::SendMessageW(b, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         return b;
     };
-    const HINSTANCE hinst = ::GetModuleHandleW(nullptr);
+    auto group = [&](const wchar_t* text, int x, int y, int w, int h) {
+        HWND g = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | WS_GROUP | kSS,
+                                   x, y, w, h, hwnd, nullptr, hi, nullptr);
+        ::SendMessageW(g, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), TRUE);
+        return g;
+    };
+    auto set = [&](int id, const wchar_t* text) {
+        ::SetWindowTextW(::GetDlgItem(hwnd, id), text);
+    };
 
-    // Row 1: model artifact (full-width edit + file-picker button)
-    label(L"Model (.ninfer):", 8, 12);
-    edit(IDC_MODEL_EDIT, L"", 132, 10, 444);
-    button(IDC_MODEL_BROWSE, L"Browse...", 584, 9, 90);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MODEL_EDIT),
-                     L"qwen3_8_27b_nvfp4 23,7gb.ninfer");
+    // Layout: two side-by-side columns of category group boxes. A pair of
+    // label + value fits on one row inside each box (pair1 left, pair2 right).
+    // Defaults are set via set(); load_settings later overrides them.
+    auto row = [&](int x, int yBase, int r) { return yBase + r * 28; };  // control y
 
-    // Row 2: context sizing. The Auto button fills the max-context field
-    // with the probed VRAM fit ceiling (beside the edit: 232..292, clear of
-    // the "Max new:" label at x=380).
-    label(L"Max context:", 8, 42);
-    edit(IDC_MAX_CONTEXT_EDIT, L"", 132, 40, 90);
-    button(IDC_AUTO_CONTEXT_BTN, L"Auto", 232, 40, 60);
-    label(L"Max new:", 380, 42);
-    edit(IDC_MAX_NEW_EDIT, L"", 510, 40, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), L"200000");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_NEW_EDIT), L"8196");
+    // ---------------------------------------------------------------- Model --
+    group(L"Model", 8, 8, 968, 40);
+    label(L"File (.ninfer):", 24, 24, 96);
+    edit(IDC_MODEL_EDIT, 132, 22, 700);
+    button(IDC_MODEL_BROWSE, L"Browse...", 844, 20, 120);
+    set(IDC_MODEL_EDIT, L"qwen3_8_27b_nvfp4 23,7gb.ninfer");
 
-    // Row 3: KV cache
-    label(L"KV capacity:", 8, 72);
-    edit(IDC_KV_CAPACITY_EDIT, L"", 132, 70, 90);
-    label(L"KV dtype:", 380, 72);
-    static const wchar_t* const kKvDtypes[] = {L"bf16", L"int8", L"fp8", L"nvfp4", L"k8v4"};
-    combo(IDC_KV_DTYPE_COMBO, 510, 70, 100, kKvDtypes, 5);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT), L"200000");
-    ::SendMessageW(::GetDlgItem(hwnd, IDC_KV_DTYPE_COMBO), CB_SETCURSEL, 2, 0);  // fp8
+    // ----------------------------------------------------- Context & KV cache --
+    group(L"Context & KV", 8, 50, 480, 168);
+    label(L"Max context:", 24, row(0, 76, 0));
+    edit(IDC_MAX_CONTEXT_EDIT, 132, row(0, 74, 0), 96);
+    button(IDC_AUTO_CONTEXT_BTN, L"Auto", 236, row(0, 74, 0), 56);
+    label(L"Max new:", 300, row(0, 76, 0));
+    edit(IDC_MAX_NEW_EDIT, 408, row(0, 74, 0), 72);
+    set(IDC_MAX_CONTEXT_EDIT, L"200000");
+    set(IDC_MAX_NEW_EDIT, L"8196");
+    label(L"KV capacity:", 24, row(0, 76, 1));
+    edit(IDC_KV_CAPACITY_EDIT, 132, row(0, 74, 1), 96);
+    label(L"KV dtype:", 300, row(0, 76, 1));
+    {
+        static const wchar_t* const kKv[] = {L"bf16", L"int8", L"fp8", L"nvfp4", L"k8v4"};
+        combo(IDC_KV_DTYPE_COMBO, 408, row(0, 74, 1), 64, kKv, 5, 2);
+    }
+    set(IDC_KV_CAPACITY_EDIT, L"200000");
+    label(L"Headroom (MiB):", 24, row(0, 76, 2));
+    edit(IDC_HEADROOM_EDIT, 132, row(0, 74, 2), 96);  // empty = default
 
-    // Row 4: VRAM headroom + request log (yes/no; the file name is fixed to
-    // requests.jsonl next to the exe when on)
-    label(L"VRAM headroom (MiB):", 8, 102);
-    edit(IDC_HEADROOM_EDIT, L"", 132, 100, 80);  // left empty by default
-    check(IDC_REQUEST_LOG_EDIT, L"Request log (requests.jsonl)", 380, 102, 220, true);
+    // ---------------------------------------------------------------- Sampling --
+    group(L"Sampling", 496, 50, 480, 168);
+    label(L"Temperature:", 512, row(0, 76, 0));
+    edit(IDC_TEMPERATURE_EDIT, 620, row(0, 74, 0), 72);
+    label(L"Top-p:", 788, row(0, 76, 0));
+    edit(IDC_TOPP_EDIT, 856, row(0, 74, 0), 72);
+    set(IDC_TEMPERATURE_EDIT, L"1.0");
+    set(IDC_TOPP_EDIT, L"0.95");
+    label(L"Top-k:", 512, row(0, 76, 1));
+    edit(IDC_TOPK_EDIT, 620, row(0, 74, 1), 72);
+    label(L"Min-p:", 788, row(0, 76, 1));
+    edit(IDC_MINP_EDIT, 856, row(0, 74, 1), 72);
+    set(IDC_TOPK_EDIT, L"20");
+    set(IDC_MINP_EDIT, L"0.0");
+    label(L"Presence:", 512, row(0, 76, 2));
+    edit(IDC_PRESENCE_EDIT, 620, row(0, 74, 2), 72);
+    label(L"Frequency:", 788, row(0, 76, 2));
+    edit(IDC_FREQUENCY_EDIT, 856, row(0, 74, 2), 72);
+    set(IDC_PRESENCE_EDIT, L"0.0");
+    set(IDC_FREQUENCY_EDIT, L"0.0");
+    button(IDC_PRESET_THINKING, L"Thinking", 620, row(0, 74, 3), 84);
+    button(IDC_PRESET_INSTRUCT, L"Instruct", 712, row(0, 74, 3), 84);
+    check(IDC_GREEDY_CHECK, L"Greedy", 856, row(0, 76, 3), 80, false);
 
-    // Row 5: endpoint
-    label(L"Host:", 8, 132);
-    edit(IDC_HOST_EDIT, L"", 132, 130, 120);
-    label(L"Port:", 380, 132);
-    edit(IDC_PORT_EDIT, L"", 510, 130, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_HOST_EDIT), L"127.0.0.1");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PORT_EDIT), L"8888");
+    // ------------------------------------------------------------ Reasoning --
+    group(L"Reasoning", 8, 210, 480, 168);
+    check(IDC_THINKING_CHECK, L"Thinking", 24, row(0, 236, 0), 110, true);
+    label(L"Think budget:", 200, row(0, 238, 0));
+    edit(IDC_DEFAULT_THINK_BUDGET_EDIT, 292, row(0, 236, 0), 80);
+    set(IDC_DEFAULT_THINK_BUDGET_EDIT, L"2048");
+    check(IDC_PRESERVE_THINKING_CHECK, L"Preserve thinking", 24, row(0, 236, 1), 170, true);
+    check(IDC_REQUEST_LOG_EDIT, L"Request log (requests.jsonl)", 216, row(0, 236, 1), 260, true);
+    check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 24, row(0, 236, 2), 170, true);
 
-    // Row 6: sampling
-    label(L"Temperature:", 8, 162);
-    edit(IDC_TEMPERATURE_EDIT, L"", 132, 160, 70);
-    label(L"Top-p:", 380, 162);
-    edit(IDC_TOPP_EDIT, L"", 510, 160, 70);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_TEMPERATURE_EDIT), L"1.0");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_TOPP_EDIT), L"0.95");
+    // ------------------------------------------------- Speculation & vision --
+    group(L"Speculation & vision", 496, 210, 480, 168);
+    label(L"Vision:", 512, row(0, 238, 0));
+    {
+        static const wchar_t* const kVision[] = {L"Off", L"On (GPU)", L"Offload"};
+        combo(IDC_VISION_COMBO, 620, row(0, 236, 0), 120, kVision, 3, 2);  // Offload
+    }
+    label(L"Spec:", 788, row(0, 238, 0));
+    {
+        static const wchar_t* const kSpec[] = {L"off", L"mtp", L"dflash", L"dflash2"};
+        combo(IDC_SPEC_COMBO, 856, row(0, 236, 0), 108, kSpec, 4, 3);  // dflash2
+    }
+    label(L"Draft tokens:", 512, row(0, 238, 1));
+    edit(IDC_DRAFT_TOKENS_EDIT, 620, row(0, 236, 1), 72);
+    set(IDC_DRAFT_TOKENS_EDIT, L"7");
+    label(L"Seed:", 788, row(0, 238, 1));
+    edit(IDC_SEED_EDIT, 856, row(0, 236, 1), 108);  // empty = engine seed
+    // ngram drafting knobs live here (not in Advanced) because they are the
+    // dflash/dflash2 speculation settings that pair with the Spec combo above.
+    label(L"Ngram draft:", 512, row(0, 238, 2));
+    edit(IDC_NGRAM_DRAFT_EDIT, 620, row(0, 236, 2), 64);
+    set(IDC_NGRAM_DRAFT_EDIT, L"15");
+    label(L"Min match:", 788, row(0, 238, 2));
+    edit(IDC_NGRAM_MIN_MATCH_EDIT, 856, row(0, 236, 2), 108);
+    set(IDC_NGRAM_MIN_MATCH_EDIT, L"8");
+    label(L"Ngram archive:", 512, row(0, 238, 3));
+    edit(IDC_NGRAM_ARCHIVE_MIB_EDIT, 620, row(0, 236, 3), 64);  // empty (flag omitted)
+    label(L"Session MiB:", 788, row(0, 238, 3));
+    edit(IDC_NGRAM_SESSION_MIB_EDIT, 856, row(0, 236, 3), 108);  // empty (flag omitted)
+    check(IDC_NGRAM_NATIVE_CHECK, L"Ngram native sessions", 512, row(0, 236, 4), 240, false);
 
-    // Row 7: sampling (continued)
-    label(L"Top-k:", 8, 192);
-    edit(IDC_TOPK_EDIT, L"", 132, 190, 70);
-    label(L"Min-p:", 380, 192);
-    edit(IDC_MINP_EDIT, L"", 510, 190, 70);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_TOPK_EDIT), L"20");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MINP_EDIT), L"0.0");
+    // ----------------------------------------------------------------- Serve --
+    group(L"Serve", 8, 386, 480, 152);
+    label(L"Model ID:", 24, row(0, 396, 0));
+    edit(IDC_MODEL_ID_EDIT, 132, row(0, 394, 0), 156);
+    label(L"Max concurrency:", 300, row(0, 396, 0));
+    edit(IDC_MAX_CONCURRENCY_EDIT, 388, row(0, 394, 0), 84);
+    set(IDC_MAX_CONCURRENCY_EDIT, L"2");
+    label(L"API key:", 24, row(0, 396, 1));
+    edit(IDC_API_KEY_EDIT, 132, row(0, 394, 1), 344);
+    label(L"Prefill chunk:", 24, row(0, 396, 2));
+    edit(IDC_PREFILL_CHUNK_EDIT, 132, row(0, 394, 2), 80);
+    set(IDC_PREFILL_CHUNK_EDIT, L"4096");
+    check(IDC_CORS_CHECK, L"CORS", 228, row(0, 394, 2), 80, false);
+    label(L"Log level:", 324, row(0, 396, 2));
+    {
+        static const wchar_t* const kLog[] = {L"error", L"warn", L"info", L"debug"};
+        combo(IDC_LOG_LEVEL_COMBO, 400, row(0, 394, 2), 72, kLog, 4, 2);  // info
+    }
+    label(L"Host:", 24, row(0, 396, 3));
+    edit(IDC_HOST_EDIT, 132, row(0, 394, 3), 156);  // empty = default 127.0.0.1
+    label(L"Port:", 300, row(0, 396, 3));
+    edit(IDC_PORT_EDIT, 388, row(0, 394, 3), 84);  // empty = default 8888
 
-    // Row 8: penalties
-    label(L"Presence:", 8, 222);
-    edit(IDC_PRESENCE_EDIT, L"", 132, 220, 70);
-    label(L"Frequency:", 380, 222);
-    edit(IDC_FREQUENCY_EDIT, L"", 510, 220, 70);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PRESENCE_EDIT), L"0.0");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_FREQUENCY_EDIT), L"0.0");
+    // ------------------------------------------- Thinking budget & media --
+    group(L"Think budget & media", 496, 386, 480, 152);
+    label(L"Budget msg:", 512, row(0, 396, 0));
+    edit(IDC_THINK_BUDGET_MSG_EDIT, 620, row(0, 394, 0), 244);
+    set(IDC_THINK_BUDGET_MSG_EDIT,
+        L"Considering the limited time available to the user, I must stop thinking now. Time to act:");
+    label(L"Policy:", 512, row(0, 396, 1));
+    {
+        static const wchar_t* const kPolicy[] = {L"strict", L"clamp", L"ignore"};
+        combo(IDC_THINK_BUDGET_POLICY_COMBO, 620, row(0, 394, 1), 96, kPolicy, 3, 1);  // clamp
+    }
+    label(L"Max budget:", 788, row(0, 396, 1));
+    edit(IDC_MAX_THINK_BUDGET_EDIT, 880, row(0, 394, 1), 84);
+    set(IDC_MAX_THINK_BUDGET_EDIT, L"4096");
+    label(L"Media cache:", 512, row(0, 396, 2));
+    edit(IDC_MEDIA_CACHE_EDIT, 620, row(0, 394, 2), 72);  // empty (flag omitted)
+    label(L"Media live:", 788, row(0, 396, 2));
+    edit(IDC_MEDIA_LIVE_EDIT, 880, row(0, 394, 2), 84);  // empty (flag omitted)
+    label(L"Preproc thr:", 512, row(0, 396, 3));
+    edit(IDC_MEDIA_PREPROC_THREADS_EDIT, 620, row(0, 394, 3), 72);  // empty (flag omitted)
+    check(IDC_NO_CUDA_GRAPH_CHECK, L"No CUDA graph", 712, row(0, 394, 3), 130, false);
+    check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"Usage chunk choice", 840, row(0, 394, 3), 130, false);
 
-    // Sampling presets: the right margin (x=600) of the sampling rows is
-    // free (the right-column edits end at x=580), so the pair stacks beside
-    // the fields they set.
-    button(IDC_PRESET_THINKING, L"Thinking", 600, 160, 80);
-    button(IDC_PRESET_INSTRUCT, L"Instruct", 600, 194, 80);
-
-    // Row 9: behavior toggles (the check text is its own label)
-    check(IDC_GREEDY_CHECK, L"Greedy", 132, 250, 120, false);
-    check(IDC_THINKING_CHECK, L"Thinking", 270, 250, 120, true);
-    check(IDC_PRESERVE_THINKING_CHECK, L"Preserve thinking", 510, 250, 180, true);
-
-    // Row 10: thinking budget + draft tokens
-    label(L"Think budget:", 8, 282);
-    edit(IDC_DEFAULT_THINK_BUDGET_EDIT, L"", 132, 280, 80);
-    label(L"Draft tokens:", 380, 282);
-    edit(IDC_DRAFT_TOKENS_EDIT, L"", 510, 280, 70);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_DEFAULT_THINK_BUDGET_EDIT), L"2048");
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_DRAFT_TOKENS_EDIT), L"7");
-
-    // Row 11: vision + speculative decoding
-    label(L"Vision:", 8, 312);
-    static const wchar_t* const kVision[] = {L"Off", L"On (GPU)", L"Offload"};
-    combo(IDC_VISION_COMBO, 132, 310, 120, kVision, 3);
-    ::SendMessageW(::GetDlgItem(hwnd, IDC_VISION_COMBO), CB_SETCURSEL, 2, 0);  // default Offload
-    label(L"Spec:", 380, 312);
-    static const wchar_t* const kSpecs[] = {L"off", L"mtp", L"dflash", L"dflash2"};
-    combo(IDC_SPEC_COMBO, 510, 310, 120, kSpecs, 4);
-    ::SendMessageW(::GetDlgItem(hwnd, IDC_SPEC_COMBO), CB_SETCURSEL, 3, 0);  // dflash2
-
-    // Row 12: draft head + seed
-    check(IDC_LM_HEAD_DRAFT_CHECK, L"LM head draft", 132, 340, 160, true);
-    label(L"Seed:", 380, 342);
-    edit(IDC_SEED_EDIT, L"", 510, 340, 100);  // left empty by default (engine seed)
-
-    // Row 13: actions
-    button(IDC_PROBE_BUTTON, L"Probe VRAM", 132, 372, 110);
-    button(IDC_LAUNCH_BUTTON, L"Launch", 252, 372, 90);
-    button(IDC_STOP_BUTTON, L"Stop", 352, 372, 80);
+    // ------------------------------------------------------- Actions + usage --
+    button(IDC_PROBE_BUTTON, L"Probe VRAM", 8, 554, 130);
+    button(IDC_LAUNCH_BUTTON, L"Launch", 146, 554, 100);
+    button(IDC_STOP_BUTTON, L"Stop", 254, 554, 80);
     ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
-}
 
-// Extended section (below the Core block + usage): serve tuning flags. Two
-// columns (label x=8 / x=380, controls x=132 / x=510), rows every 30 px
-// starting at y=496. The think-budget-message edit is full-width so its
-// long default is visible. Defaults come from the canonical config; empty
-// edits and unchecked boxes are omitted from the serve argv.
-void create_extended_controls(HWND hwnd) {
-    const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
-
-    auto label = [&](const wchar_t* text, int x, int y) {
-        HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                   x, y, 120, 18, hwnd, nullptr,
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    };
-    auto edit = [&](int id, const wchar_t* text, int x, int y, int w) {
-        HWND e = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text,
-                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                                   x, y, w, 22, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(e, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        return e;
-    };
-    auto combo = [&](int id, int x, int y, int w, const wchar_t* const* items, int count) {
-        HWND c = ::CreateWindowExW(0, L"COMBOBOX", L"",
-                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                   x, y, w, 200, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        for (int i = 0; i < count; ++i) {
-            ::SendMessageW(c, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(items[i]));
-        }
-        ::SendMessageW(c, CB_SETCURSEL, 0, 0);
-        return c;
-    };
-    auto check = [&](int id, const wchar_t* text, int x, int y, int w, bool checked) {
-        HWND c = ::CreateWindowExW(0, L"BUTTON", text,
-                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                                   x, y, w, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                   ::GetModuleHandleW(nullptr), nullptr);
-        ::SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
-        return c;
-    };
-
-    // Section header.
-    label(L"Extended:", 8, 466);
-
-    // E-row 1: model id + prefill chunk
-    label(L"Model ID:", 8, 498);
-    edit(IDC_MODEL_ID_EDIT, L"", 132, 496, 120);
-    label(L"Prefill chunk:", 380, 498);
-    edit(IDC_PREFILL_CHUNK_EDIT, L"", 510, 496, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PREFILL_CHUNK_EDIT), L"4096");
-
-    // E-row 2: max concurrency + api key
-    label(L"Max concurrency:", 8, 528);
-    edit(IDC_MAX_CONCURRENCY_EDIT, L"", 132, 526, 80);
-    label(L"API key:", 380, 528);
-    edit(IDC_API_KEY_EDIT, L"", 510, 526, 180);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONCURRENCY_EDIT), L"2");
-
-    // E-row 3: think budget message (full-width for the long default)
-    label(L"Think budget msg:", 8, 558);
-    edit(IDC_THINK_BUDGET_MSG_EDIT, L"", 132, 556, 558);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_THINK_BUDGET_MSG_EDIT),
-                     L"Considering the limited time available to the user, I must stop thinking now. Time to act:");
-
-    // E-row 4: think budget policy + log level
-    label(L"Think policy:", 8, 588);
-    static const wchar_t* const kThinkPolicies[] = {L"strict", L"clamp", L"ignore"};
-    combo(IDC_THINK_BUDGET_POLICY_COMBO, 132, 586, 100, kThinkPolicies, 3);
-    ::SendMessageW(::GetDlgItem(hwnd, IDC_THINK_BUDGET_POLICY_COMBO), CB_SETCURSEL, 1, 0);  // clamp
-    label(L"Log level:", 380, 588);
-    static const wchar_t* const kLogLevels[] = {L"error", L"warn", L"info", L"debug"};
-    combo(IDC_LOG_LEVEL_COMBO, 510, 586, 100, kLogLevels, 4);
-    ::SendMessageW(::GetDlgItem(hwnd, IDC_LOG_LEVEL_COMBO), CB_SETCURSEL, 2, 0);  // info
-
-    // E-row 5: max thinking budget + cors
-    label(L"Max think budget:", 8, 618);
-    edit(IDC_MAX_THINK_BUDGET_EDIT, L"", 132, 616, 80);
-    check(IDC_CORS_CHECK, L"CORS", 510, 616, 120, false);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_THINK_BUDGET_EDIT), L"4096");
-
-    // E-row 6: media cache + no cuda graph
-    label(L"Media cache (MiB):", 8, 648);
-    edit(IDC_MEDIA_CACHE_EDIT, L"", 132, 646, 80);  // empty (flag omitted)
-    check(IDC_NO_CUDA_GRAPH_CHECK, L"No CUDA graph", 510, 646, 150, false);
-
-    // E-row 7: media live + usage chunk choice
-    label(L"Media live (MiB):", 8, 678);
-    edit(IDC_MEDIA_LIVE_EDIT, L"", 132, 676, 80);  // empty (flag omitted)
-    check(IDC_USAGE_CHUNK_CHOICE_CHECK, L"Usage chunk choice", 510, 676, 160, false);
-
-    // E-row 8: media preprocess threads
-    label(L"Media preproc thr:", 8, 708);
-    edit(IDC_MEDIA_PREPROC_THREADS_EDIT, L"", 132, 706, 80);  // empty (flag omitted)
 }
 
 // The Win32 SDK headers do not define SS_GROUPBOX (it is an MFC constant);
@@ -1527,14 +1573,15 @@ void create_extended_controls(HWND hwnd) {
 constexpr int kSSGroupBox      = 0x0003;
 
 // Advanced (collapsible) section geometry. The group box sits below the
-// Extended section; its 27 controls fill 14 two-column rows of 30 px.
+// category grid + actions row; its 27 controls fill 14 two-column rows of
+// 30 px. kCompactWinH is the window height when Advanced is collapsed.
 constexpr int kAdvGroupX       = 8;
-constexpr int kAdvGroupY       = 768;
-constexpr int kAdvGroupW       = 744;
-constexpr int kAdvGroupH       = 448;   // group bottom at 768 + 448 = 1216
-constexpr int kAdvRow0Y        = 788;   // first row's control y
-constexpr int kAdvRowStep      = 30;
-constexpr int kCompactWinH     = 940;   // the height CreateWindowExW sets
+constexpr int kAdvGroupY       = 616;
+constexpr int kAdvGroupW       = 968;   // full grid width (matches the Model row)
+constexpr int kAdvGroupH       = 276;   // group bottom at 616 + 276 = 892
+constexpr int kAdvRow0Y        = 628;   // first row's control y
+constexpr int kAdvRowStep      = 28;    // same row pitch as the main grid
+constexpr int kCompactWinH     = 688;   // the height CreateWindowExW sets
 constexpr int kExpandedClientH = kAdvGroupY + kAdvGroupH + 40;  // group + status strip
 
 // Show/hide the Advanced group box, all 27 controls, and all 24 labels, and
@@ -1545,20 +1592,77 @@ void set_advanced_visible(HWND hwnd, bool show) {
     const int cmd = show ? SW_SHOWNOACTIVATE : SW_HIDE;
     HWND group = ::GetDlgItem(hwnd, IDC_ADV_GROUP);
     if (group != nullptr) { ::ShowWindow(group, cmd); }
-    auto toggle = [&](int from, int to) {
-        for (int id = from; id <= to; ++id) {
-            HWND c = ::GetDlgItem(hwnd, id);
-            if (c != nullptr) { ::ShowWindow(c, cmd); }
-        }
+    // Explicit list of the 22 Advanced controls. The ngram controls
+    // (IDC_NGRAM_* 312..316) now live in the always-visible
+    // "Speculation & vision" box, so a numeric range from 301..327 would wrongly
+    // hide them on collapse. Labels keep the range (non-existent IDs are NULL).
+    const int adv_controls[] = {
+        IDC_PREFIX_CACHE_FILE_EDIT, IDC_USE_ORIG_PREFIX_CHECK,
+        IDC_MAX_SHARED_PREFIXES_EDIT, IDC_MAX_PRIVATE_CONT_EDIT,
+        IDC_LONG_ANCHOR_SPACING_EDIT, IDC_MAX_LONG_ANCHORS_EDIT,
+        IDC_HOST_CACHE_MIB_EDIT, IDC_HOST_KV_MIB_EDIT, IDC_HOST_STATE_SLOTS_EDIT,
+        IDC_DEV_SNAP_SLOTS_EDIT, IDC_DEV_STATE_SLOTS_EDIT,
+        IDC_CACHE_TAP_LADDER_EDIT, IDC_CACHE_TAP_MIN_GAP_EDIT,
+        IDC_CACHE_TAPS_PER_REQ_EDIT, IDC_RESP_STORE_MAX_RECORDS_EDIT,
+        IDC_RESP_STORE_MAX_MIB_EDIT, IDC_MAX_REQUEST_MIB_EDIT,
+        IDC_MAX_PENDING_REQ_EDIT, IDC_PENDING_TIMEOUT_MS_EDIT,
+        IDC_CHAT_TEMPLATE_EDIT, IDC_CONTEXT_COST_PRESETS_EDIT,
+        IDC_TOLERANT_TOOL_CALLS_CHECK,
     };
-    toggle(IDC_PREFIX_CACHE_FILE_EDIT, IDC_TOLERANT_TOOL_CALLS_CHECK);  // controls
-    toggle(IDC_ADV_LABEL_BASE, IDC_ADV_LABEL_BASE + 23);                // labels
+    for (int id : adv_controls) {
+        HWND c = ::GetDlgItem(hwnd, id);
+        if (c != nullptr) { ::ShowWindow(c, cmd); }
+    }
+    // Explicit label/header id list: the header + label controls are created
+    // with ids 400..421 in row order (22 total). A fixed range would hide
+    // labels that are not in the expected slots if the layout ever changes.
+    const int adv_labels[] = {
+        400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410,
+        411, 412, 413, 414, 415, 416, 417, 418, 419, 420, 421,
+    };
+    for (int id : adv_labels) {
+        HWND c = ::GetDlgItem(hwnd, id);
+        if (c != nullptr) { ::ShowWindow(c, cmd); }
+    }
     RECT wr = {};
     RECT cr = {};
     if (!::GetWindowRect(hwnd, &wr) || !::GetClientRect(hwnd, &cr)) { return; }
     const int nonclient = (wr.bottom - wr.top) - cr.bottom;
     const int new_h = show ? (kExpandedClientH + nonclient) : kCompactWinH;
     ::MoveWindow(hwnd, wr.left, wr.top, wr.right - wr.left, new_h, TRUE);
+}
+
+// Enforce the serve's arg-compatibility rules at the UI level. The two
+// prefix-caching systems are mutually exclusive and the serve rejects any argv
+// that mixes them; --ngram-native-sessions also requires --ngram-archive-mib.
+// Grey out the incompatible controls so the user cannot compose a rejected
+// argv. build_serve_argv gates the same conditions as defense in depth (a
+// saved INI could predate this UI).
+void apply_compat_gating(HWND hwnd) {
+    const bool use_orig =
+        ::SendMessageW(::GetDlgItem(hwnd, IDC_USE_ORIG_PREFIX_CHECK), BM_GETCHECK, 0, 0)
+            == BST_CHECKED;
+    // Hybrid (new, default) system only: --prefix-cache-file,
+    // --device-snapshot-slots, --cache-tap-*. Disabled while the original
+    // system is selected.
+    const int hybrid_only[] = {
+        IDC_PREFIX_CACHE_FILE_EDIT, IDC_DEV_SNAP_SLOTS_EDIT,
+        IDC_CACHE_TAP_LADDER_EDIT, IDC_CACHE_TAP_MIN_GAP_EDIT,
+        IDC_CACHE_TAPS_PER_REQ_EDIT,
+    };
+    for (int id : hybrid_only) { ::EnableWindow(::GetDlgItem(hwnd, id), !use_orig); }
+    // Original system only: shared/private catalogs, long anchors, host KV,
+    // host state slots, device state slots. Disabled while hybrid is selected.
+    const int orig_only[] = {
+        IDC_MAX_SHARED_PREFIXES_EDIT, IDC_MAX_PRIVATE_CONT_EDIT,
+        IDC_LONG_ANCHOR_SPACING_EDIT, IDC_MAX_LONG_ANCHORS_EDIT,
+        IDC_HOST_KV_MIB_EDIT, IDC_HOST_STATE_SLOTS_EDIT, IDC_DEV_STATE_SLOTS_EDIT,
+    };
+    for (int id : orig_only) { ::EnableWindow(::GetDlgItem(hwnd, id), use_orig); }
+    // --host-cache-mib is valid under both systems, so it stays always enabled.
+    // --ngram-native-sessions requires --ngram-archive-mib.
+    const std::wstring archive = get_control_text(::GetDlgItem(hwnd, IDC_NGRAM_ARCHIVE_MIB_EDIT));
+    ::EnableWindow(::GetDlgItem(hwnd, IDC_NGRAM_NATIVE_CHECK), !archive.empty());
 }
 
 // Advanced section: one collapsible "Advanced" group box below the Extended
@@ -1597,9 +1701,18 @@ void create_advanced_controls(HWND hwnd) {
         if (checked) { ::SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0); }
         return c;
     };
+    // Bold section divider; shares the label-id pool so collapse hides it too.
+    auto header = [&](const wchar_t* text, int x, int y) {
+        HWND h = ::CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                   x, y, 220, 16, hwnd,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(label_id++)),
+                                   ::GetModuleHandleW(nullptr), nullptr);
+        ::SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), TRUE);
+    };
 
-    // Compact toggle just above the group (the Extended block ends at 728).
-    check(IDC_ADV_TOGGLE_CHECK, L"Show advanced", 8, 740, 150, false);
+    // Compact toggle just above the group (the category grid + actions end
+    // around y=566).
+    check(IDC_ADV_TOGGLE_CHECK, L"Show advanced", 8, 588, 150, false);
 
     HWND group = ::CreateWindowExW(0, L"STATIC", L"Advanced",
         WS_CHILD | WS_VISIBLE | WS_GROUP | kSSGroupBox | WS_TABSTOP,
@@ -1611,95 +1724,75 @@ void create_advanced_controls(HWND hwnd) {
     const int y0 = kAdvRow0Y;
     const int dy = kAdvRowStep;
 
-    // A-row 1: prefix cache file (full-width: holds a long absolute path).
-    // Default resolves to <deploy-dir>\prefix-cache.bin at runtime: the deploy
-    // folder name carries non-ASCII bytes the source cannot spell, and module
-    // dir() carries its real bytes.
-    label(L"Prefix cache file:", 8, y0 + 2);
-    edit(IDC_PREFIX_CACHE_FILE_EDIT, L"", 132, y0, 558);
+    // Four sub-columns reuse the main grid's exact label/control x-positions
+    // (24/132, 300/408, 512/620, 788/856), so this section reads as the two
+    // grid boxes merged into one border. '&' is doubled: a bare '&' is a
+    // mnemonic accelerator and Win32 would swallow it in the header text.
+
+    // ---- Section 1: Prefix caching & memory -------------------------------
+    header(L"Prefix caching && memory", 24, y0);
+
+    // Prefix cache file (full-width: holds a long absolute path). Default
+    // resolves to <deploy-dir>\prefix-cache.bin at runtime: the deploy folder
+    // name carries non-ASCII bytes the source cannot spell; module dir() has
+    // its real bytes.
+    label(L"Prefix cache file:", 24, y0 + dy + 2);
+    edit(IDC_PREFIX_CACHE_FILE_EDIT, L"", 132, y0 + dy, 832);
     const std::wstring pcache_dir = module_dir();
     if (!pcache_dir.empty()) {
         ::SetWindowTextW(::GetDlgItem(hwnd, IDC_PREFIX_CACHE_FILE_EDIT),
                          (pcache_dir + L"prefix-cache.bin").c_str());
     }
 
-    // A-row 2: original prefix caching + shared prefixes
-    check(IDC_USE_ORIG_PREFIX_CHECK, L"Use orig prefix caching", 132, y0 + dy, 220, false);
-    label(L"Shared prefixes:", 380, y0 + dy + 2);
-    edit(IDC_MAX_SHARED_PREFIXES_EDIT, L"", 510, y0 + dy, 80);  // empty (flag omitted)
+    check(IDC_USE_ORIG_PREFIX_CHECK, L"Use orig prefix caching", 24, y0 + 2*dy, 196, false);
+    label(L"Shared prefixes:", 300, y0 + 2*dy + 2);
+    edit(IDC_MAX_SHARED_PREFIXES_EDIT, L"", 408, y0 + 2*dy, 80);  // empty (flag omitted)
+    label(L"Priv. continuations:", 512, y0 + 2*dy + 2);
+    edit(IDC_MAX_PRIVATE_CONT_EDIT, L"", 620, y0 + 2*dy, 80);  // empty (flag omitted)
+    label(L"Anchor:", 788, y0 + 2*dy + 2);
+    edit(IDC_LONG_ANCHOR_SPACING_EDIT, L"", 856, y0 + 2*dy, 80);  // empty (flag omitted)
 
-    // A-row 3: private continuations + anchor spacing
-    label(L"Priv. continuations:", 8, y0 + 2*dy + 2);
-    edit(IDC_MAX_PRIVATE_CONT_EDIT, L"", 132, y0 + 2*dy, 80);  // empty (flag omitted)
-    label(L"Anchor spacing:", 380, y0 + 2*dy + 2);
-    edit(IDC_LONG_ANCHOR_SPACING_EDIT, L"", 510, y0 + 2*dy, 80);  // empty (flag omitted)
-
-    // A-row 4: long anchors + host cache
-    label(L"Max long anchors:", 8, y0 + 3*dy + 2);
+    label(L"Max long anchors:", 24, y0 + 3*dy + 2);
     edit(IDC_MAX_LONG_ANCHORS_EDIT, L"", 132, y0 + 3*dy, 80);  // empty (flag omitted)
-    label(L"Host cache (MiB):", 380, y0 + 3*dy + 2);
-    edit(IDC_HOST_CACHE_MIB_EDIT, L"", 510, y0 + 3*dy, 80);
+    label(L"Host cache (MiB):", 300, y0 + 3*dy + 2);
+    edit(IDC_HOST_CACHE_MIB_EDIT, L"", 408, y0 + 3*dy, 80);
     ::SetWindowTextW(::GetDlgItem(hwnd, IDC_HOST_CACHE_MIB_EDIT), L"32000");
+    label(L"Host KV (MiB):", 512, y0 + 3*dy + 2);
+    edit(IDC_HOST_KV_MIB_EDIT, L"", 620, y0 + 3*dy, 80);  // empty (flag omitted)
+    label(L"H-state:", 788, y0 + 3*dy + 2);
+    edit(IDC_HOST_STATE_SLOTS_EDIT, L"", 856, y0 + 3*dy, 80);  // empty (flag omitted)
 
-    // A-row 5: host KV + host state slots
-    label(L"Host KV (MiB):", 8, y0 + 4*dy + 2);
-    edit(IDC_HOST_KV_MIB_EDIT, L"", 132, y0 + 4*dy, 80);  // empty (flag omitted)
-    label(L"Host state slots:", 380, y0 + 4*dy + 2);
-    edit(IDC_HOST_STATE_SLOTS_EDIT, L"", 510, y0 + 4*dy, 80);  // empty (flag omitted)
+    label(L"Dev snap slots:", 24, y0 + 4*dy + 2);
+    edit(IDC_DEV_SNAP_SLOTS_EDIT, L"", 132, y0 + 4*dy, 80);  // empty (flag omitted)
+    label(L"Dev state slots:", 300, y0 + 4*dy + 2);
+    edit(IDC_DEV_STATE_SLOTS_EDIT, L"", 408, y0 + 4*dy, 80);  // empty (flag omitted)
 
-    // A-row 6: device slots
-    label(L"Dev snap slots:", 8, y0 + 5*dy + 2);
-    edit(IDC_DEV_SNAP_SLOTS_EDIT, L"", 132, y0 + 5*dy, 80);  // empty (flag omitted)
-    label(L"Dev state slots:", 380, y0 + 5*dy + 2);
-    edit(IDC_DEV_STATE_SLOTS_EDIT, L"", 510, y0 + 5*dy, 80);  // empty (flag omitted)
+    // ---- Section 2: Requests, cache tap & misc ----------------------------
+    header(L"Requests, cache tap && misc", 24, y0 + 5*dy);
 
-    // A-row 7: ngram draft + min match
-    label(L"Ngram draft:", 8, y0 + 6*dy + 2);
-    edit(IDC_NGRAM_DRAFT_EDIT, L"", 132, y0 + 6*dy, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_NGRAM_DRAFT_EDIT), L"15");
-    label(L"Ngram min match:", 380, y0 + 6*dy + 2);
-    edit(IDC_NGRAM_MIN_MATCH_EDIT, L"", 510, y0 + 6*dy, 80);
-    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_NGRAM_MIN_MATCH_EDIT), L"8");
+    label(L"Cache tap ladder:", 24, y0 + 6*dy + 2);
+    edit(IDC_CACHE_TAP_LADDER_EDIT, L"", 132, y0 + 6*dy, 80);  // empty (flag omitted)
+    label(L"Cache tap min gap:", 300, y0 + 6*dy + 2);
+    edit(IDC_CACHE_TAP_MIN_GAP_EDIT, L"", 408, y0 + 6*dy, 80);  // empty (flag omitted)
+    label(L"Cache taps/req:", 512, y0 + 6*dy + 2);
+    edit(IDC_CACHE_TAPS_PER_REQ_EDIT, L"", 620, y0 + 6*dy, 80);  // empty (flag omitted)
+    label(L"Rec max:", 788, y0 + 6*dy + 2);
+    edit(IDC_RESP_STORE_MAX_RECORDS_EDIT, L"", 856, y0 + 6*dy, 80);  // empty (flag omitted)
 
-    // A-row 8: ngram native sessions + ngram archive
-    check(IDC_NGRAM_NATIVE_CHECK, L"Ngram native sessions", 132, y0 + 7*dy, 200, false);
-    label(L"Ngram archive MiB:", 380, y0 + 7*dy + 2);
-    edit(IDC_NGRAM_ARCHIVE_MIB_EDIT, L"", 510, y0 + 7*dy, 80);  // empty (flag omitted)
+    label(L"Resp store MiB max:", 24, y0 + 7*dy + 2);
+    edit(IDC_RESP_STORE_MAX_MIB_EDIT, L"", 132, y0 + 7*dy, 80);  // empty (flag omitted)
+    label(L"Max request (MiB):", 300, y0 + 7*dy + 2);
+    edit(IDC_MAX_REQUEST_MIB_EDIT, L"", 408, y0 + 7*dy, 80);  // empty (flag omitted)
+    label(L"Max pending reqs:", 512, y0 + 7*dy + 2);
+    edit(IDC_MAX_PENDING_REQ_EDIT, L"", 620, y0 + 7*dy, 80);  // empty (flag omitted)
+    label(L"Timeout:", 788, y0 + 7*dy + 2);
+    edit(IDC_PENDING_TIMEOUT_MS_EDIT, L"", 856, y0 + 7*dy, 80);  // empty (flag omitted)
 
-    // A-row 9: ngram session + cache tap ladder
-    label(L"Ngram session MiB:", 8, y0 + 8*dy + 2);
-    edit(IDC_NGRAM_SESSION_MIB_EDIT, L"", 132, y0 + 8*dy, 80);  // empty (flag omitted)
-    label(L"Cache tap ladder:", 380, y0 + 8*dy + 2);
-    edit(IDC_CACHE_TAP_LADDER_EDIT, L"", 510, y0 + 8*dy, 80);  // empty (flag omitted)
-
-    // A-row 10: cache tap gap + taps per request
-    label(L"Cache tap min gap:", 8, y0 + 9*dy + 2);
-    edit(IDC_CACHE_TAP_MIN_GAP_EDIT, L"", 132, y0 + 9*dy, 80);  // empty (flag omitted)
-    label(L"Cache taps/req:", 380, y0 + 9*dy + 2);
-    edit(IDC_CACHE_TAPS_PER_REQ_EDIT, L"", 510, y0 + 9*dy, 80);  // empty (flag omitted)
-
-    // A-row 11: response store limits
-    label(L"Resp store rec max:", 8, y0 + 10*dy + 2);
-    edit(IDC_RESP_STORE_MAX_RECORDS_EDIT, L"", 132, y0 + 10*dy, 80);  // empty (flag omitted)
-    label(L"Resp store MiB max:", 380, y0 + 10*dy + 2);
-    edit(IDC_RESP_STORE_MAX_MIB_EDIT, L"", 510, y0 + 10*dy, 80);  // empty (flag omitted)
-
-    // A-row 12: request limits
-    label(L"Max request (MiB):", 8, y0 + 11*dy + 2);
-    edit(IDC_MAX_REQUEST_MIB_EDIT, L"", 132, y0 + 11*dy, 80);  // empty (flag omitted)
-    label(L"Max pending reqs:", 380, y0 + 11*dy + 2);
-    edit(IDC_MAX_PENDING_REQ_EDIT, L"", 510, y0 + 11*dy, 80);  // empty (flag omitted)
-
-    // A-row 13: pending timeout + chat template
-    label(L"Pending timeout ms:", 8, y0 + 12*dy + 2);
-    edit(IDC_PENDING_TIMEOUT_MS_EDIT, L"", 132, y0 + 12*dy, 80);  // empty (flag omitted)
-    label(L"Chat template:", 380, y0 + 12*dy + 2);
-    edit(IDC_CHAT_TEMPLATE_EDIT, L"", 510, y0 + 12*dy, 100);  // empty (flag omitted)
-
-    // A-row 14: context cost presets + tolerant tool calls
-    label(L"Ctx cost presets:", 8, y0 + 13*dy + 2);
-    edit(IDC_CONTEXT_COST_PRESETS_EDIT, L"", 132, y0 + 13*dy, 80);  // empty (flag omitted)
-    check(IDC_TOLERANT_TOOL_CALLS_CHECK, L"Tolerant tool calls", 510, y0 + 13*dy, 180, false);
+    label(L"Chat template:", 24, y0 + 8*dy + 2);
+    edit(IDC_CHAT_TEMPLATE_EDIT, L"", 132, y0 + 8*dy, 80);  // empty (flag omitted)
+    label(L"Ctx cost presets:", 300, y0 + 8*dy + 2);
+    edit(IDC_CONTEXT_COST_PRESETS_EDIT, L"", 408, y0 + 8*dy, 80);  // empty (flag omitted)
+    check(IDC_TOLERANT_TOOL_CALLS_CHECK, L"Tolerant tool calls", 512, y0 + 8*dy, 180, false);
 
     // Collapsed by default (no-op window resize: already the compact height).
     set_advanced_visible(hwnd, false);
@@ -1794,36 +1887,109 @@ void create_tooltips(HWND hMain) {
         { IDC_TOLERANT_TOOL_CALLS_CHECK, L"leniently recover malformed tool calls (strict all-or-nothing by default)." },
     };
 
-    // The tooltip common control must NOT be created with WS_CHILD|WS_POPUP:
-    // that combination is invalid, the class rejects it, and CreateWindowExW
-    // returns NULL, and it must not pass an hMenu. The real historical failure
-    // on this machine was exactly those two things (bad style + a bogus
-    // (HMENU)1600), so this call uses no window style and a nullptr menu;
-    // TTS_ALWAYSTIP is the only style. In the Windows SDK TOOLTIPS_CLASSW is
-    // L"tooltips_class32", so there is no alternative class name to fall back
-    // to: one CreateWindowExW is all there is. The strings in kRows are
-    // process-lifetime literals, so the lpszText pointers below stay valid.
+    // Match the reference launcher (ninfer-win/apps/gui/main.cpp): the tooltip
+    // is a child of the main window with only TTS_ALWAYSTIP -- no WS_POPUP, no
+    // WS_CHILD. That is the pattern that actually renders. The strings in kRows
+    // are process-lifetime literals, so the lpszText pointers below stay valid.
     HWND hTip = ::CreateWindowExW(0, TOOLTIPS_CLASSW, L"",
                                    TTS_ALWAYSTIP, 0, 0, 0, 0, hMain,
                                    nullptr, ::GetModuleHandleW(nullptr), nullptr);
     if (hTip == nullptr) { return; }
     ::SendMessageW(hTip, TTM_SETMAXTIPWIDTH, 380, 0);
+    int added = 0, skipped = 0;
+    LRESULT first_add = 0;
     for (const ToolTipRow& row : kRows) {
         const HWND hCtl = ::GetDlgItem(hMain, row.id);
-        if (hCtl == nullptr) { continue; }
-        TOOLINFO ti {};
+        if (hCtl == nullptr) { ++skipped; continue; }
+        TOOLINFOW ti {};
         ti.cbSize   = sizeof(ti);
         ti.uFlags   = TTF_IDISHWND;
         ti.hwnd     = hMain;
         ti.uId      = reinterpret_cast<UINT_PTR>(hCtl);
         ti.lpszText = const_cast<LPWSTR>(row.text);  // control copies the string; never writes through it
-        ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&ti));
+        const LRESULT r = ::SendMessageW(hTip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+        if (added == 0) { first_add = r; }
+        ++added;
+    }
+    // TTM_GETTOOLINFOW reliably reports TRUE only if the tool was actually
+    // registered. Check the first two rows as the definitive signal.
+    int found = 0;
+    for (const ToolTipRow& row : { kRows[0], kRows[1] }) {
+        const HWND hCtl = ::GetDlgItem(hMain, row.id);
+        if (hCtl == nullptr) { continue; }
+        wchar_t tbuf[512] {};
+        TOOLINFOW q {};
+        q.cbSize   = sizeof(q);
+        q.uFlags   = TTF_IDISHWND;
+        q.hwnd     = hMain;
+        q.uId      = reinterpret_cast<UINT_PTR>(hCtl);
+        q.lpszText = tbuf;
+        if (::SendMessageW(hTip, TTM_GETTOOLINFOW, 0, reinterpret_cast<LPARAM>(&q))) { ++found; }
+    }
+    const LRESULT toolCount = ::SendMessageW(hTip, TTM_GETTOOLCOUNT, 0, 0);
+    // Isolate a W/ANSI message mismatch: try the ANSI TTM_ADDTOOL on the first
+    // tool and re-count. If it registers, TTM_ADDTOOLW is the wrong message.
+    LRESULT toolCountAfterAnsi = -1;
+    {
+        const HWND hCtl = ::GetDlgItem(hMain, kRows[0].id);
+        if (hCtl) {
+            TOOLINFOW ti2 {};
+            ti2.cbSize   = sizeof(ti2);
+            ti2.uFlags   = TTF_IDISHWND;
+            ti2.hwnd     = hMain;
+            ti2.uId      = reinterpret_cast<UINT_PTR>(hCtl);
+            ti2.lpszText = const_cast<LPWSTR>(kRows[0].text);
+            ::SendMessageW(hTip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&ti2));
+            toolCountAfterAnsi = ::SendMessageW(hTip, TTM_GETTOOLCOUNT, 0, 0);
+        }
+    }
+    // Isolate the mechanism: a simple integer-ID tool (no TTF_IDISHWND). If this
+    // registers, TTM_ADDTOOLW works and the issue is HWND-based tooling.
+    LRESULT toolCountSimpleId = -1;
+    {
+        TOOLINFOW ti4 {};
+        ti4.cbSize   = sizeof(ti4);
+        ti4.uFlags   = 0;
+        ti4.hwnd     = hMain;
+        ti4.uId      = 987654;
+        ti4.lpszText = const_cast<LPWSTR>(L"simple id test");
+        ::SendMessageW(hTip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti4));
+        toolCountSimpleId = ::SendMessageW(hTip, TTM_GETTOOLCOUNT, 0, 0);
+    }
+    wchar_t tipcls[64] {};
+    ::GetClassNameW(hTip, tipcls, 64);
+    const LONG tipStyle = ::GetWindowLongW(hTip, GWL_STYLE);
+    const BOOL tipIsChild = (tipStyle & WS_CHILD) != 0;
+    const BOOL tipParentIsMain = (::GetParent(hTip) == hMain);
+    char styleBuf[16] {};
+    ::wsprintfA(styleBuf, "0x%X", (unsigned)tipStyle);
+    const std::string tipStyleStr = styleBuf;
+    std::string clsA;
+    { int n = ::WideCharToMultiByte(CP_UTF8, 0, tipcls, -1, nullptr, 0, nullptr, nullptr);
+      if (n > 0) { clsA.resize(n - 1); ::WideCharToMultiByte(CP_UTF8, 0, tipcls, -1, &clsA[0], n, nullptr, nullptr); } }
+    {
+        std::string msg = "create_tooltips: hTip_null=" + std::to_string(hTip == nullptr ? 1 : 0)
+            + " rows=" + std::to_string((int)(sizeof(kRows) / sizeof(kRows[0])))
+            + " added=" + std::to_string(added)
+            + " skipped=" + std::to_string(skipped)
+            + " first_add=" + std::to_string((long)first_add)
+            + " gettoolinfo_found=" + std::to_string(found)
+            + " toolcount=" + std::to_string((long)toolCount)
+            + " toolcount_after_ansi=" + std::to_string((long)toolCountAfterAnsi)
+            + " toolcount_simpleid=" + std::to_string((long)toolCountSimpleId)
+            + " lasterr=" + std::to_string(::GetLastError())
+            + " tipcls=" + clsA
+            + " tipstyle=" + tipStyleStr
+            + " tip_is_child=" + std::to_string(tipIsChild ? 1 : 0)
+            + " tip_parent_is_main=" + std::to_string(tipParentIsMain ? 1 : 0) + "\n";
+        std::ofstream dbg(module_dir() + L"gui-tooltip.log", std::ios::app);
+        dbg << msg;
     }
 }
 
 void create_scaffold(HWND hwnd) {
-    create_core_controls(hwnd);
-    create_extended_controls(hwnd);
+    create_ui_fonts();
+    create_grouped_controls(hwnd);
     create_advanced_controls(hwnd);
     load_settings(hwnd);  // override the defaults above with any saved values
     // Re-sync the Advanced visibility after load_settings: a persisted
@@ -1833,6 +1999,7 @@ void create_scaffold(HWND hwnd) {
         hwnd,
         ::SendMessageW(::GetDlgItem(hwnd, IDC_ADV_TOGGLE_CHECK), BM_GETCHECK, 0, 0)
             == BST_CHECKED);
+    apply_compat_gating(hwnd);
     create_status(hwnd);
     create_usage_block(hwnd);
     create_tooltips(hwnd);  // after every control (core/extended/advanced) exists
@@ -1874,11 +2041,13 @@ void launch_serve(HWND hwnd, const std::vector<std::wstring>& argv,
                           current_dir.empty() ? nullptr : current_dir.data(),
                           &si, &pi)) {
         const DWORD err = ::GetLastError();
+        append_serve_log(L"LAUNCH FAILED (Win32 " + std::to_wstring(err) + L") cmd=" + mutable_command);
         set_status(hwnd, L"Error: failed to start ninfer-serve.exe (Win32 error " +
                             std::to_wstring(err) + L")");
         return;
     }
     ::CloseHandle(pi.hThread);
+    append_serve_log(L"LAUNCH ok pid=" + std::to_wstring(pi.dwProcessId) + L" cmd=" + mutable_command);
 
     g_child.process   = pi.hProcess;
     g_child.running.store(true);
@@ -1921,6 +2090,7 @@ void serve_child(HWND hwnd) {
     }
 
     if (find_sibling(L"ninfer-serve.exe").empty()) {
+        append_serve_log(L"LAUNCH BLOCKED: ninfer-serve.exe not found next to ninfer-gui.exe");
         set_status(hwnd, L"Error: ninfer-serve.exe not found next to ninfer-gui.exe");
         return;
     }
@@ -1928,9 +2098,10 @@ void serve_child(HWND hwnd) {
     // A serve already answering on the target port would make the new child die
     // on bind with no useful status; detect it up front via /health (the same
     // helper the health poll uses).
+    const std::wstring host_s = host.empty() ? std::wstring(L"127.0.0.1") : host;
     if (!http_get(host, port, "/health").empty()) {
-        set_status(hwnd, L"A serve is already running on " +
-                            (host.empty() ? std::wstring(L"127.0.0.1") : host) + L":" + port +
+        append_serve_log(L"LAUNCH BLOCKED: serve already running on " + host_s + L":" + port);
+        set_status(hwnd, L"A serve is already running on " + host_s + L":" + port +
                             L"; Stop it first or pick another port.");
         return;
     }
@@ -1959,20 +2130,58 @@ void serve_child(HWND hwnd) {
                        extra_status;
     }
 
+    // --ngram-draft-tokens above 15 requires --max-concurrency 1; block the
+    // launch with a clear reason instead of a silent arg-validation crash.
+    const std::optional<std::uint64_t> ngram_draft = parse_uint_field(hwnd, IDC_NGRAM_DRAFT_EDIT);
+    const std::optional<std::uint64_t> max_conc    = parse_uint_field(hwnd, IDC_MAX_CONCURRENCY_EDIT);
+    if (ngram_draft && *ngram_draft > 15 && max_conc && *max_conc > 1) {
+        set_status(hwnd, L"Error: ngram-draft-tokens above 15 requires max-concurrency 1");
+        return;
+    }
+
     const std::vector<std::wstring> argv = build_serve_argv(hwnd, model);
     launch_serve(hwnd, argv, extra_status);
 }
 
-// Stop the serve this GUI launched (its terminal window dies); the GUI stays
-// open. The watcher posts WM_APP_DONE, which re-enables Launch and reports
-// the exit code.
+// Terminate every running ninfer-serve.exe process by image name, whether or
+// not this GUI spawned it. Returns how many were signalled. This lets the GUI
+// adopt a serve started elsewhere (e.g. start.bat): Stop frees the port so
+// Launch can start a fresh one.
+int kill_serve_processes() {
+    int killed = 0;
+    const HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) { return killed; }
+    PROCESSENTRY32W entry {};
+    entry.dwSize = sizeof(entry);
+    if (::Process32FirstW(snap, &entry)) {
+        do {
+            if (::_wcsicmp(entry.szExeFile, L"ninfer-serve.exe") == 0) {
+                HANDLE proc = ::OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+                if (proc != nullptr) {
+                    ::TerminateProcess(proc, 1);
+                    ::CloseHandle(proc);
+                    ++killed;
+                }
+            }
+        } while (::Process32NextW(snap, &entry));
+    }
+    ::CloseHandle(snap);
+    return killed;
+}
+
+// Stop the serve on the configured port. Kills any ninfer-serve.exe, including
+// one started outside this GUI. When the GUI owns the child, its watcher also
+// posts WM_APP_DONE (re-enabling Launch and reporting the exit code); the
+// button/timer resets here are idempotent with that.
 void stop_serve(HWND hwnd) {
-    if (g_child.running.load() && g_child.process != nullptr) {
-        set_status(hwnd, L"Stopping serve\u2026");
-        ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
-        ::TerminateProcess(g_child.process, 1);
+    const int killed = kill_serve_processes();
+    ::KillTimer(hwnd, kHealthTimerId);
+    ::EnableWindow(::GetDlgItem(hwnd, IDC_LAUNCH_BUTTON), TRUE);
+    ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), FALSE);
+    if (killed > 0) {
+        set_status(hwnd, killed == 1 ? L"Stopped serve." : L"Stopped serve processes.");
     } else {
-        set_status(hwnd, L"No serve started from this GUI.");
+        set_status(hwnd, L"No ninfer-serve.exe running.");
     }
 }
 
@@ -2022,8 +2231,29 @@ std::string http_get(const std::wstring& host, const std::wstring& port, const s
     return body;
 }
 
+// Called once at startup: if a serve already answers /health on the configured
+// port (e.g. one started via start.bat, not this GUI), surface it so Launch's
+// port guard is not a mystery, and enable Stop so the user can end it.
+void check_external_serve(HWND hwnd) {
+    const std::wstring host = get_control_text(::GetDlgItem(hwnd, IDC_HOST_EDIT));
+    const std::wstring port = get_control_text(::GetDlgItem(hwnd, IDC_PORT_EDIT));
+    const std::wstring host_s = host.empty() ? std::wstring(L"127.0.0.1") : host;
+    if (!http_get(host, port, "/health").empty()) {
+        ::EnableWindow(::GetDlgItem(hwnd, IDC_STOP_BUTTON), TRUE);
+        set_status(hwnd, L"Serve already running on " + host_s + L":" + port +
+                            L" (not started by this GUI). Stop it, then Launch.");
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_CREATE:
+        // Build the controls + tooltip during CreateWindowExW, matching the
+        // reference launcher (ni-fork/windows/apps/gui/main.cpp builds its
+        // controls and tooltip in WM_CREATE). Tooltips added after the window
+        // is fully created do not register (TTM_GETTOOLINFOW returns FALSE).
+        create_scaffold(hwnd);
+        return 0;
     case WM_COMMAND:
         if (LOWORD(wParam) == IDCANCEL) { ::PostQuitMessage(0); }
         if (HIWORD(wParam) == EN_KILLFOCUS) { save_settings(hwnd); }
@@ -2055,20 +2285,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 set_status(hwnd, L"Error: choose a model artifact (.ninfer)");
                 return 0;
             }
-            // Fill the max-context field with the probed ceiling. On failure
-            // (fit == 0) run_probe has already reported the reason, so leave
-            // both fields untouched.
+            // Fill BOTH the max-context and kv-capacity fields with the probed ceiling. The
+            // serve will not load unless kv-capacity >= max-context, and a pool above the VRAM
+            // ceiling cannot fit, so both are pinned to the ceiling (the largest that fits).
+            // On failure (fit == 0) run_probe has already reported the reason, so leave both
+            // fields untouched.
             const std::uint32_t fit = ensure_probe(hwnd, model);
             if (fit > 0) {
-                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT),
-                                 std::to_wstring(fit).c_str());
-                // Keep max-context <= kv-capacity: a fixed pool below the
-                // ceiling is bumped up to the fit.
-                const std::optional<std::uint64_t> kv_cap = parse_uint_field(hwnd, IDC_KV_CAPACITY_EDIT);
-                if (kv_cap && *kv_cap < fit) {
-                    ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT),
-                                     std::to_wstring(fit).c_str());
-                }
+                const std::wstring fit_text = std::to_wstring(fit);
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_MAX_CONTEXT_EDIT), fit_text.c_str());
+                ::SetWindowTextW(::GetDlgItem(hwnd, IDC_KV_CAPACITY_EDIT), fit_text.c_str());
             }
             return 0;
         }
@@ -2089,6 +2315,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 hwnd,
                 ::SendMessageW(::GetDlgItem(hwnd, IDC_ADV_TOGGLE_CHECK), BM_GETCHECK, 0, 0)
                     == BST_CHECKED);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_USE_ORIG_PREFIX_CHECK && HIWORD(wParam) == BN_CLICKED) {
+            apply_compat_gating(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_NGRAM_ARCHIVE_MIB_EDIT && HIWORD(wParam) == EN_CHANGE) {
+            apply_compat_gating(hwnd);
             return 0;
         }
         if (LOWORD(wParam) == IDC_MODEL_BROWSE && HIWORD(wParam) == BN_CLICKED) {
@@ -2176,8 +2410,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int nCmdShow) {
-    INITCOMMONCONTROLSEX icc { sizeof(icc), ICC_STANDARD_CLASSES | ICC_BAR_CLASSES };
+int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nCmdShow) {
+    INITCOMMONCONTROLSEX icc { sizeof(icc), ICC_STANDARD_CLASSES };
     ::InitCommonControlsEx(&icc);
 
     WNDCLASSEXW wc { sizeof(wc) };
@@ -2189,13 +2423,14 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int nCmdShow) {
     ::RegisterClassExW(&wc);
 
     HWND hwnd = ::CreateWindowExW(0, kWindowClass, kWindowTitle, WS_OVERLAPPEDWINDOW,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, 760, 940,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 1000, kCompactWinH,
                                   nullptr, nullptr, hinst, nullptr);
     if (!hwnd) { return 1; }
-    create_scaffold(hwnd);
+    // create_scaffold runs in WM_CREATE (during CreateWindowExW above).
     ::SetTimer(hwnd, 1, 3000, nullptr);
     ::ShowWindow(hwnd, nCmdShow);
     ::UpdateWindow(hwnd);
+    check_external_serve(hwnd);
 
     MSG msg;
     for (;;) {

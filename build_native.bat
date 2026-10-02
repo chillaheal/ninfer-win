@@ -6,7 +6,7 @@ REM from the prebuilt global vcpkg tree at C:\vcpkg (ffmpeg 9.0.1 + curl 8.21
 REM x64-windows) instead of manifest-mode rebuilding (ffmpeg 8.1.1 source build
 REM fails here). No vcpkg toolchain file: deps are found via CMAKE_PREFIX_PATH
 REM plus the local FindFFMPEG module.
-call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul
+call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 REM vcvars64 exports its own VCPKG_ROOT (the VS-bundled tree); re-assert ours.
 set "VCPKG_ROOT=C:\vcpkg"

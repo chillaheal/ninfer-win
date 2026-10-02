@@ -133,6 +133,25 @@ KvCapacityResolution resolve_kv_capacity(const KvCapacityPolicy& policy,
                                     " bytes are available after weights");
     }
 
+    // The capacity ceiling: the largest Main KV token capacity whose reservation fits the
+    // effective after-weights budget, independent of the requested context (which only bounds
+    // the resolved `pages`). A caller with no fixed context (the VRAM probe) uses this as the
+    // largest context that fits. The physical layout is affine in page groups, so the stride
+    // extrapolates above maximum_main_page_groups; in auto mode `capacity_budget` already
+    // excludes the automatic headroom, so the ceiling is what the engine would actually fit.
+    std::uint32_t kv_max_tokens = 0;
+    const std::size_t stride = curve.bytes_per_additional_main_page_group;
+    if (stride > 0 && capacity_budget > curve.minimum_device_reservation_bytes) {
+        const std::size_t additional =
+            (capacity_budget - curve.minimum_device_reservation_bytes) / stride;
+        const std::uint64_t ceiling_pages =
+            static_cast<std::uint64_t>(curve.minimum_main_page_groups) + additional;
+        const std::uint64_t ceiling_tokens = ceiling_pages * curve.main_page_tokens;
+        if (ceiling_tokens <= std::numeric_limits<std::uint32_t>::max()) {
+            kv_max_tokens = static_cast<std::uint32_t>(ceiling_tokens);
+        }
+    }
+
     return KvCapacityResolution{
         .mode                                 = policy.mode,
         .main_page_groups                     = pages,
@@ -144,6 +163,7 @@ KvCapacityResolution resolve_kv_capacity(const KvCapacityPolicy& policy,
         .available_after_weights_bytes        = available_runtime_bytes,
         .automatic_headroom_bytes             = policy.automatic_headroom_bytes,
         .planned_slack_bytes                  = available_runtime_bytes - reservation,
+        .kv_max_tokens                        = kv_max_tokens,
     };
 }
 
